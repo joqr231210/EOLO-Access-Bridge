@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EOLO Hikvision Local</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div>
+            <strong>EOLO Access Bridge</strong>
+            <span id="bridgeIdentifierText">Nuevo Dispositivo Bridge</span>
+          </div>
+        </div>
+        <nav class="nav">
+          <button class="nav-item hidden" data-panel="chat" hidden>Comandos</button>
+          <button class="nav-item active" data-panel="employees">Empleados</button>
+          <button class="nav-item" data-panel="events">Eventos</button>
+          <button class="nav-item" data-panel="settings">Configuracion</button>
+        </nav>
+        <div class="status-card">
+          <span class="status-dot" id="statusDot"></span>
+          <div>
+            <strong id="statusMode">Última Comunicación</strong>
+            <span class="communication-lines" id="statusDetail">
+              <span>Local <b id="localCommunicationTime">ND</b></span>
+              <span>Nube <b id="cloudCommunicationTime">ND</b></span>
+            </span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Terminal de reconocimiento facial</p>
+            <h1>Servicio local EOLO</h1>
+          </div>
+          <div class="toolbar">
+            <button class="icon-button" id="refreshBtn" title="Actualizar estado">R</button>
+            <button
+              class="event-toggle"
+              id="streamBtn"
+              type="button"
+              role="switch"
+              aria-checked="false"
+              disabled
+              title="Valida la comunicacion con el dispositivo local para escuchar eventos"
+            >
+              <span class="event-toggle-track" aria-hidden="true">
+                <span class="event-toggle-knob"></span>
+              </span>
+              <span class="event-toggle-copy">
+                <strong>Escuchar Eventos Dispositivo</strong>
+                <small id="streamToggleStatus">Validacion requerida</small>
+              </span>
+            </button>
+          </div>
+        </header>
+        <div class="latest-log-bar" id="latestLogBar" role="button" tabindex="0">
+          <span>Ultimo log</span>
+          <i class="latest-log-dot" id="latestLogDot" aria-hidden="true"></i>
+          <strong id="latestLogText">Sin comunicacion reciente.</strong>
+        </div>
+
+        <section class="panel" id="chatPanel">
+          <div class="chat-window" id="chatWindow"></div>
+          <form class="composer" id="commandForm">
+            <input
+              id="commandInput"
+              autocomplete="off"
+              placeholder="Mensaje o comando"
+            />
+            <button type="submit">Enviar</button>
+          </form>
+        </section>
+
+        <section class="panel active" id="employeesPanel">
+          <div class="tabs" role="tablist" aria-label="Gestion de empleados">
+            <button class="tab-button active" type="button" data-task-tab="directory">Directorio</button>
+            <button class="tab-button" type="button" data-task-tab="register">Registrar empleado</button>
+          </div>
+          <div class="tab-panel active" id="directoryTaskPanel">
+            <div class="tool-card full">
+              <div class="directory-toolbar">
+                <h2>Empleados</h2>
+                <form class="directory-search" id="employeeSearchForm">
+                  <input id="employeeSearchInput" placeholder="Buscar ID empleado" />
+                  <button type="submit">Buscar</button>
+                  <button type="button" id="refreshEmployeesBtn">Actualizar</button>
+                </form>
+              </div>
+              <div class="employee-table" id="employeeTable"></div>
+            </div>
+          </div>
+          <div class="tab-panel" id="registerTaskPanel">
+            <form class="tool-card task-card" id="employeeForm">
+              <h2>Registrar empleado</h2>
+              <label>
+                ID empleado
+                <input name="employeeNo" required placeholder="1001" />
+              </label>
+              <label>
+                Nombre
+                <input name="name" required placeholder="Persona de prueba" />
+              </label>
+              <div class="form-grid">
+                <label>
+                  Puerta
+                  <input name="doorNo" type="number" min="1" value="1" />
+                </label>
+                <label>
+                  Plan
+                  <input name="planTemplateNo" value="1" />
+                </label>
+              </div>
+              <div class="form-actions">
+                <button type="submit" data-action="create">Alta</button>
+                <button type="submit" data-action="update">Modificar</button>
+                <button type="submit" data-action="delete" class="danger">Baja</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <dialog class="modal" id="editEmployeeModal">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div>
+                <p class="eyebrow">Detalle de empleado</p>
+                <h2>Modificar empleado</h2>
+              </div>
+              <button type="button" class="modal-close" data-close-modal="editEmployeeModal" aria-label="Cerrar">x</button>
+            </div>
+            <div class="modal-tabs" role="tablist" aria-label="Editar empleado">
+              <button class="modal-tab-button active" type="button" data-edit-tab="details">Datos</button>
+              <button class="modal-tab-button" type="button" data-edit-tab="face">Actualizar rostro</button>
+            </div>
+            <form class="modal-tab-panel active" id="editEmployeeForm">
+              <label>
+                ID empleado
+                <input name="employeeNo" readonly />
+              </label>
+              <label>
+                Nombre
+                <input name="name" required />
+              </label>
+              <div class="form-grid">
+                <label>
+                  Puerta
+                  <input name="doorNo" type="number" min="1" />
+                </label>
+                <label>
+                  Plan
+                  <input name="planTemplateNo" />
+                </label>
+              </div>
+              <div class="form-actions">
+                <button type="button" data-close-modal="editEmployeeModal">Cancelar</button>
+                <button type="submit">Guardar cambios</button>
+              </div>
+            </form>
+            <form class="modal-tab-panel" id="editEmployeeFaceForm">
+              <label>
+                ID empleado
+                <input name="employeeNo" readonly />
+              </label>
+              <label>
+                Imagen facial
+                <input name="face" type="file" accept="image/png,image/jpeg" required />
+              </label>
+              <div class="form-actions">
+                <button type="button" data-close-modal="editEmployeeModal">Cancelar</button>
+                <button type="submit">Actualizar rostro</button>
+              </div>
+            </form>
+            </div>
+        </dialog>
+
+        <dialog class="modal" id="deleteEmployeeModal">
+          <form class="modal-card" id="deleteEmployeeForm">
+            <div class="modal-header">
+              <h2>Eliminar empleado</h2>
+              <button type="button" class="modal-close" data-close-modal="deleteEmployeeModal">Cerrar</button>
+            </div>
+            <p id="deleteEmployeeText">Confirma la baja del empleado.</p>
+            <input name="employeeNo" type="hidden" />
+            <div class="form-actions">
+              <button type="button" data-close-modal="deleteEmployeeModal">Cancelar</button>
+              <button type="submit" class="danger">Eliminar</button>
+            </div>
+          </form>
+        </dialog>
+
+        <section class="panel" id="eventsPanel">
+          <div class="events-tabs" role="tablist" aria-label="Eventos y logs">
+            <button class="events-tab-button active" type="button" data-events-tab="device">Eventos dispositivo</button>
+            <button class="events-tab-button" type="button" data-events-tab="logs">Logs</button>
+          </div>
+          <div class="events-tab-panel active" id="deviceEventsPanel">
+            <div class="tool-card full">
+              <div class="card-header">
+                <h2>Eventos dispositivo</h2>
+                <button id="mockEventBtn">Simular evento</button>
+              </div>
+              <div class="event-list" id="eventList"></div>
+            </div>
+          </div>
+          <div class="events-tab-panel" id="logsEventsPanel">
+            <div class="tool-card full">
+              <h2>Logs</h2>
+              <div class="log-list" id="logList"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="settingsPanel">
+          <div class="settings-page-layout">
+            <form class="settings-stack" id="deviceConfigForm" novalidate>
+              <div class="tabs settings-tabs" role="tablist" aria-label="Configuracion">
+                <button class="tab-button active" type="button" data-settings-tab="device">Dispositivo Local</button>
+                <button class="tab-button" type="button" data-settings-tab="eolo">Sincronizacion EOLO</button>
+              </div>
+              <div class="settings-layout">
+                <div class="tool-card settings-tab-panel active" id="deviceSettingsPanel">
+                  <h2>Dispositivo Local</h2>
+              <div class="connection-summary" id="connectionSummary">
+                <div class="summary-item" id="deviceConnectionCard">
+                  <span class="summary-dot" aria-hidden="true"></span>
+                  <div>
+                    <strong id="deviceConnectionTitle">Verificando comunicacion</strong>
+                    <span id="deviceConnectionDetail">Esperando respuesta del dispositivo.</span>
+                  </div>
+                </div>
+                <div class="summary-item" id="passwordStatusCard">
+                  <span class="summary-dot" aria-hidden="true"></span>
+                  <div>
+                    <strong id="passwordStatusTitle">Credenciales</strong>
+                    <span id="passwordStatusDetail">Revisando si hay contrasena guardada.</span>
+                  </div>
+                </div>
+              </div>
+              <label>
+                Identificador
+                <input name="bridgeIdentifier" placeholder="Nuevo Dispositivo Bridge" />
+              </label>
+              <label class="check-row">
+                <input name="mockDevice" type="checkbox" />
+                Modo prueba
+              </label>
+              <div class="form-grid">
+                <label>
+                  Protocolo
+                  <select name="protocol">
+                    <option value="http">http</option>
+                    <option value="https">https</option>
+                  </select>
+                </label>
+                <label>
+                  Puerto
+                  <input name="port" type="number" min="1" max="65535" required />
+                </label>
+              </div>
+              <label>
+                IP o host
+                <input name="host" required placeholder="192.168.1.77" />
+              </label>
+              <label>
+                Usuario
+                <input name="username" required autocomplete="username" />
+              </label>
+              <div class="credential-panel" id="credentialPanel">
+                <div>
+                  <strong>Credenciales de acceso</strong>
+                  <span id="credentialHint">La contrasena guardada se conserva si no activas el cambio.</span>
+                </div>
+                <label class="check-row credential-toggle">
+                  <input name="changePassword" type="checkbox" />
+                  Cambiar contrasena guardada
+                </label>
+              </div>
+              <label>
+                Nueva contrasena
+                <input
+                  name="password"
+                  type="password"
+                  autocomplete="current-password"
+                  placeholder="Activa cambiar contrasena para editar"
+                />
+              </label>
+              <div class="form-grid">
+                <label>
+                  Puerta
+                  <input name="doorNo" type="number" min="1" value="1" />
+                </label>
+                <label>
+                  Plan
+                  <input name="planTemplateNo" value="1" />
+                </label>
+              </div>
+              <div class="form-grid">
+                <label>
+                  FDID
+                  <input name="fdid" value="1" />
+                </label>
+                <label>
+                  Libreria facial
+                  <input name="faceLibType" value="blackFD" />
+                </label>
+              </div>
+              <div class="form-grid">
+                <label>
+                  Dedupe seg.
+                  <input name="dedupWindowSeconds" type="number" min="1" max="120" value="8" />
+                </label>
+              </div>
+              <div class="form-actions settings-panel-actions">
+                <button type="button" id="testConfigBtn">Probar</button>
+                <button type="button" class="primary-button" id="saveDeviceConfigBtn">Guardar</button>
+              </div>
+              </div>
+                <div class="tool-card settings-tab-panel" id="eoloSettingsPanel">
+                  <h2>Sincronizacion EOLO</h2>
+                <div class="connection-summary">
+                  <div class="summary-item" id="eoloSyncStatusCard">
+                    <span class="summary-dot" aria-hidden="true"></span>
+                    <div>
+                      <strong id="eoloSyncStatusTitle">Sincronizacion EOLO</strong>
+                      <span id="eoloSyncStatusDetail">Revisando configuracion de usuarios.</span>
+                    </div>
+                  </div>
+                </div>
+                <label class="check-row">
+                  <input name="eoloUserSyncEnabled" type="checkbox" />
+                  Sincronizar con EOLO Usuarios
+                </label>
+                <label>
+                  Endpoint usuarios EOLO
+                  <input
+                    name="eoloUserSyncEndpoint"
+                    placeholder="https://eolo.app/version-test/api/1.1/wf/permisos-acceso"
+                  />
+                </label>
+                <label>
+                  ID Acceso EOLO
+                  <input name="eoloAccess" placeholder="1754678396045x..." />
+                </label>
+                <label>
+                  ID Dispositivo EOLO
+                  <input name="localDeviceId" placeholder="1784244113632x813567226617878100" />
+                </label>
+                <label>
+                  Intervalo sincronizacion min.
+                  <input name="eoloUserSyncIntervalMinutes" type="number" min="1" max="1440" value="30" />
+                </label>
+                <div class="credential-panel" id="eoloTokenPanel">
+                  <div>
+                    <strong>Token Bearer EOLO</strong>
+                    <span id="eoloTokenHint">El token guardado se conserva si no activas el cambio.</span>
+                  </div>
+                  <label class="check-row credential-toggle">
+                    <input name="changeEoloToken" type="checkbox" />
+                    Cambiar token Bearer guardado
+                  </label>
+                </div>
+                <label>
+                  Nuevo token Bearer
+                  <input
+                    name="eoloToken"
+                    type="password"
+                    autocomplete="off"
+                    placeholder="Activa cambiar token para editar"
+                  />
+                </label>
+                <div class="form-actions settings-panel-actions">
+                  <button type="button" id="syncEoloUsersBtn">Sincronizar ahora</button>
+                  <button type="button" class="primary-button" id="saveEoloConfigBtn">Guardar</button>
+                </div>
+              </div>
+            </div>
+            </form>
+            <div class="tool-card full settings-log-card settings-debug-panel active" id="deviceValidationPanel">
+              <div class="card-header">
+                <h2>Log Dispositivo Local</h2>
+                <button type="button" id="clearValidationBtn">Limpiar</button>
+              </div>
+              <div class="validation-result" id="validationResult">Sin prueba reciente.</div>
+              <pre id="deviceInfo" class="json-block">{}</pre>
+            </div>
+            <div class="tool-card full settings-log-card settings-debug-panel" id="eoloSyncDebugPanel">
+              <div class="card-header">
+                <h2>Log Sincronizacion EOLO</h2>
+                <button type="button" id="clearEoloSyncDebugBtn">Limpiar</button>
+              </div>
+              <div class="validation-result" id="eoloSyncResult">Sin prueba reciente.</div>
+              <pre id="eoloSyncInfo" class="json-block">{}</pre>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+node_modules/
+.env
+data/*.jsonl
+uploads/
+backups/
+work/
+.DS_Store
+
+# Local runtime state and secrets
+data/device-config.json
+AnprEolo/
+AnprEolo/config.json
+AnprEolo/plates.db
+AnprEolo/static/captures/
+
+# Heavy model/runtime artifacts
+AnprEolo/*.pt
+AnprEolo/*.onnx
+AnprEolo/__pycache__/
+AnprEolo/**/__pycache__/
+AnprEolo/stream/rtsptomse
