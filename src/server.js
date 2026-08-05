@@ -568,7 +568,7 @@ function registerServices() {
       id: 'visit-sync',
       name: 'Visitas Sync',
       baseUrl: config.anpr.baseUrl,
-      description: 'Sincroniza accesos y estacionamiento locales hacia EOLO Cloud.'
+      description: 'Sincroniza accesos y visitas locales hacia EOLO Cloud.'
     })
   );
 }

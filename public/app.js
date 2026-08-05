@@ -734,7 +734,6 @@ function renderAnprApiServiceView() {
         ${renderDefinitionList([
           { label: 'Servidor ANPR', value: cfg.server_url || '-' },
           { label: 'ID acceso', value: cfg.id_acceso || '-' },
-          { label: 'ID estacionamiento', value: cfg.id_estacionamiento || '-' },
           { label: 'Archivo DB', value: dashboard().db_file || '-' }
         ])}
       </section>
@@ -937,14 +936,13 @@ function renderBarrierEditorRow(barrier = emptyBarrier(), index = 0, cameras = [
 
 function renderVisitSyncServiceView() {
   const access = dashboard().access || {};
-  const parking = dashboard().parking || {};
   return `
     ${renderAnprUnavailable()}
     ${renderMetrics([
       { label: 'Servicio', value: serviceIsRunning('visit-sync') ? 'Activo' : 'Detenido' },
       { label: 'Mov. pendientes', value: access.pending_sync_count ?? '-' },
       { label: 'Placas residentes', value: access.plate_count ?? '-' },
-      { label: 'Inventario pendiente', value: parking.counts?.inventory ?? '-' }
+      { label: 'Accesos recientes', value: (access.movements || []).length }
     ])}
     <div class="service-section-grid">
       <section class="service-section">
@@ -968,42 +966,6 @@ function renderVisitSyncServiceView() {
       <section class="service-section wide">
         <h4>Accesos recientes</h4>
         ${renderAccessMovementsTable(access.movements || [])}
-      </section>
-      <section class="service-section">
-        <h4>Exentos pendientes</h4>
-        ${renderTable(
-          [
-            { label: 'Placa', value: 'placa' },
-            { label: 'Movimiento', value: 'id_movimiento' }
-          ],
-          parking.exempt_pending || [],
-          'Sin exentos pendientes.'
-        )}
-      </section>
-      <section class="service-section">
-        <h4>Inventario pendiente</h4>
-        ${renderTable(
-          [
-            { label: 'Placa', value: 'placa' },
-            { label: 'Reserva', value: 'uid_reserva' },
-            { label: 'Total', value: 'total_por_pagar', type: 'money' }
-          ],
-          parking.inventory || [],
-          'Sin inventario pendiente.'
-        )}
-      </section>
-      <section class="service-section">
-        <h4>Salidas estacionamiento</h4>
-        ${renderTable(
-          [
-            { label: 'Placa', value: 'placa' },
-            { label: 'Reserva', value: 'id_movimiento_reserva' },
-            { label: 'Fecha', value: 'fecha_salida' },
-            { label: 'Sync', value: 'sync', type: 'sync' }
-          ],
-          parking.movements || [],
-          'Sin salidas registradas.'
-        )}
       </section>
     </div>
   `;
