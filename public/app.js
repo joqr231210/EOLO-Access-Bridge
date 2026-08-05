@@ -9,9 +9,11 @@ const state = {
   anprHardware: null,
   anprHardwareError: null,
   activeServiceTab: 'hikvision-events',
+  activeFaceRecognitionTab: 'operation',
   deviceCommunicationOk: false,
   lastLocalCommunicationAt: null,
   employees: [],
+  employeeDirectoryLoaded: false,
   employeePage: {
     page: 0,
     pageSize: 12,
@@ -26,7 +28,7 @@ const eventList = $('#eventList');
 const logList = $('#logList');
 
 const serviceTabs = [
-  { id: 'hikvision-events', label: 'Face Recognition Hikvision', title: 'Face Recognition Hikvision' },
+  { id: 'hikvision-events', label: 'Face Recognition', title: 'Face Recognition' },
   { id: 'eolo-users-sync', label: 'Residentes Sync', title: 'Residentes Sync' },
   { id: 'eolo-task-poller', label: 'Tareas Pooling', title: 'Tareas Pooling' },
   { id: 'anpr-api', label: 'Local API ANPR', title: 'Local API ANPR' },
@@ -474,6 +476,7 @@ function renderServiceTabs() {
 function renderServiceDetail() {
   const detail = $('#serviceDetail');
   if (!detail) return;
+  parkEmployeeWorkspace();
   const tab = serviceTabs.find((item) => item.id === state.activeServiceTab) || serviceTabs[0];
   const service = serviceById(tab.id);
   const renderers = {
@@ -495,6 +498,26 @@ function renderServiceDetail() {
     </div>
     ${(renderers[tab.id] || renderEmptyServiceView)(service)}
   `;
+  mountEmployeeWorkspace();
+}
+
+function parkEmployeeWorkspace() {
+  const workspace = $('#employeeWorkspace');
+  const panel = $('#employeesPanel');
+  if (!workspace || !panel || workspace.parentElement === panel) return;
+  panel.appendChild(workspace);
+}
+
+function mountEmployeeWorkspace() {
+  const mount = $('#faceEmployeesMount');
+  const workspace = $('#employeeWorkspace');
+  if (!mount || !workspace) return;
+  mount.appendChild(workspace);
+  if ($('#directoryTaskPanel')?.classList.contains('active') && !state.employeeDirectoryLoaded) {
+    loadEmployees(state.employeePage.filter, state.employeePage.page).catch((error) =>
+      addMessage('assistant', error.message, { error: true })
+    );
+  }
 }
 
 function renderServiceStatusPill(service = {}) {
@@ -613,6 +636,17 @@ function renderServiceActions(serviceId, options = {}) {
 }
 
 function renderHikvisionServiceView() {
+  const employeesActive = state.activeFaceRecognitionTab === 'employees';
+  return `
+    <div class="service-inner-tabs" role="tablist" aria-label="Face Recognition">
+      <button class="service-inner-tab ${employeesActive ? '' : 'active'}" type="button" data-face-tab="operation">Operacion</button>
+      <button class="service-inner-tab ${employeesActive ? 'active' : ''}" type="button" data-face-tab="employees">Empleados</button>
+    </div>
+    ${employeesActive ? renderFaceEmployeesView() : renderFaceOperationView()}
+  `;
+}
+
+function renderFaceOperationView() {
   const stream = state.health?.stream || {};
   const device = state.deviceConfig?.hikvision || {};
   const events = state.events.slice(-20).reverse();
@@ -647,6 +681,10 @@ function renderHikvisionServiceView() {
       </section>
     </div>
   `;
+}
+
+function renderFaceEmployeesView() {
+  return '<div class="face-employees-mount" id="faceEmployeesMount"></div>';
 }
 
 function renderEoloUsersServiceView() {
@@ -1027,6 +1065,7 @@ async function loadEmployees(employeeNo = state.employeePage.filter, page = stat
   const result = await api(`/api/employees?${query.toString()}`);
   state.employees = result.employees || [];
   state.employeePage.total = Number(result.totalMatches || state.employees.length || 0);
+  state.employeeDirectoryLoaded = true;
   renderEmployees(result);
   return result;
 }
@@ -1660,6 +1699,13 @@ $('#serviceTabs')?.addEventListener('click', (event) => {
 });
 
 $('#serviceDetail').addEventListener('click', (event) => {
+  const faceTab = event.target.closest('[data-face-tab]');
+  if (faceTab) {
+    state.activeFaceRecognitionTab = faceTab.dataset.faceTab;
+    renderServiceDetail();
+    return;
+  }
+
   const hardwareForm = event.target.closest('#anprHardwareForm');
   if (event.target.closest('[data-add-camera]')) {
     const rows = $('#hardwareCameraRows');

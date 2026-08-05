@@ -17,18 +17,18 @@
         </div>
         <nav class="nav">
           <button class="nav-item hidden" data-panel="chat" hidden>Comandos</button>
-          <button class="nav-item active" data-panel="employees">Empleados</button>
+          <button class="nav-item hidden" data-panel="employees" hidden>Empleados</button>
           <div class="nav-group" id="servicesNavGroup">
-            <button class="nav-item nav-group-toggle" data-panel="services" id="servicesNavToggle" aria-expanded="true">
+            <button class="nav-item nav-group-toggle active" data-panel="services" id="servicesNavToggle" aria-expanded="true">
               <span>Servicios</span>
               <span class="nav-chevron" aria-hidden="true">⌄</span>
             </button>
             <div class="nav-submenu" id="serviceSidebarMenu" role="menu" aria-label="Servicios"></div>
           </div>
-          <button class="nav-item" data-panel="events">Eventos</button>
+          <button class="nav-item hidden" data-panel="events" hidden>Eventos</button>
           <button class="nav-item" data-panel="settings">Configuracion</button>
         </nav>
-        <div class="status-card">
+        <div class="status-card" hidden>
           <span class="status-dot" id="statusDot"></span>
           <div>
             <strong id="statusMode">Última Comunicación</strong>
@@ -85,51 +85,53 @@
           </form>
         </section>
 
-        <section class="panel active" id="employeesPanel">
-          <div class="tabs" role="tablist" aria-label="Gestion de empleados">
-            <button class="tab-button active" type="button" data-task-tab="directory">Directorio</button>
-            <button class="tab-button" type="button" data-task-tab="register">Registrar empleado</button>
-          </div>
-          <div class="tab-panel active" id="directoryTaskPanel">
-            <div class="tool-card full">
-              <div class="directory-toolbar">
-                <h2>Empleados</h2>
-                <form class="directory-search" id="employeeSearchForm">
-                  <input id="employeeSearchInput" placeholder="Buscar ID empleado" />
-                  <button type="submit">Buscar</button>
-                  <button type="button" id="refreshEmployeesBtn">Actualizar</button>
-                </form>
-              </div>
-              <div class="employee-table" id="employeeTable"></div>
+        <section class="panel" id="employeesPanel">
+          <div id="employeeWorkspace">
+            <div class="tabs" role="tablist" aria-label="Gestion de empleados">
+              <button class="tab-button active" type="button" data-task-tab="directory">Directorio</button>
+              <button class="tab-button" type="button" data-task-tab="register">Registrar empleado</button>
             </div>
-          </div>
-          <div class="tab-panel" id="registerTaskPanel">
-            <form class="tool-card task-card" id="employeeForm">
-              <h2>Registrar empleado</h2>
-              <label>
-                ID empleado
-                <input name="employeeNo" required placeholder="1001" />
-              </label>
-              <label>
-                Nombre
-                <input name="name" required placeholder="Persona de prueba" />
-              </label>
-              <div class="form-grid">
+            <div class="tab-panel active" id="directoryTaskPanel">
+              <div class="tool-card full">
+                <div class="directory-toolbar">
+                  <h2>Empleados</h2>
+                  <form class="directory-search" id="employeeSearchForm">
+                    <input id="employeeSearchInput" placeholder="Buscar ID empleado" />
+                    <button type="submit">Buscar</button>
+                    <button type="button" id="refreshEmployeesBtn">Actualizar</button>
+                  </form>
+                </div>
+                <div class="employee-table" id="employeeTable"></div>
+              </div>
+            </div>
+            <div class="tab-panel" id="registerTaskPanel">
+              <form class="tool-card task-card" id="employeeForm">
+                <h2>Registrar empleado</h2>
                 <label>
-                  Puerta
-                  <input name="doorNo" type="number" min="1" value="1" />
+                  ID empleado
+                  <input name="employeeNo" required placeholder="1001" />
                 </label>
                 <label>
-                  Plan
-                  <input name="planTemplateNo" value="1" />
+                  Nombre
+                  <input name="name" required placeholder="Persona de prueba" />
                 </label>
-              </div>
-              <div class="form-actions">
-                <button type="submit" data-action="create">Alta</button>
-                <button type="submit" data-action="update">Modificar</button>
-                <button type="submit" data-action="delete" class="danger">Baja</button>
-              </div>
-            </form>
+                <div class="form-grid">
+                  <label>
+                    Puerta
+                    <input name="doorNo" type="number" min="1" value="1" />
+                  </label>
+                  <label>
+                    Plan
+                    <input name="planTemplateNo" value="1" />
+                  </label>
+                </div>
+                <div class="form-actions">
+                  <button type="submit" data-action="create">Alta</button>
+                  <button type="submit" data-action="update">Modificar</button>
+                  <button type="submit" data-action="delete" class="danger">Baja</button>
+                </div>
+              </form>
+            </div>
           </div>
         </section>
 
@@ -202,7 +204,7 @@
           </form>
         </dialog>
 
-        <section class="panel" id="servicesPanel">
+        <section class="panel active" id="servicesPanel">
           <div class="tool-card full">
             <div class="card-header">
               <h2>Servicios</h2>

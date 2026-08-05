@@ -81,6 +81,11 @@ button {
   gap: 6px;
 }
 
+.nav-item[hidden],
+.status-card[hidden] {
+  display: none;
+}
+
 .nav-group {
   display: grid;
   gap: 4px;
@@ -868,6 +873,43 @@ button:disabled {
 .empty-state.compact {
   min-height: 76px;
   padding: 12px;
+}
+
+.service-inner-tabs {
+  width: min(100%, 520px);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.service-inner-tab {
+  min-height: 40px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--muted);
+}
+
+.service-inner-tab:last-child {
+  border-right: 0;
+}
+
+.service-inner-tab.active {
+  background: #0b0b0b;
+  color: #ffffff;
+}
+
+.face-employees-mount {
+  display: grid;
+  gap: 14px;
+}
+
+.face-employees-mount .tool-card {
+  border: 0;
+  box-shadow: none;
+  padding: 0;
 }
 
 .hardware-form {

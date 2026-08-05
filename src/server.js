@@ -461,7 +461,7 @@ function normalizeEmployee(body) {
 function registerServices() {
   serviceManager.register({
     id: 'hikvision-events',
-    name: 'Face Recognition Hikvision',
+    name: 'Face Recognition',
     group: 'bridge',
     description: 'Escucha eventos del dispositivo local o del simulador.',
     status: async () => {
