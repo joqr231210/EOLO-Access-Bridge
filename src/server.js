@@ -555,6 +555,14 @@ function registerServices() {
       description: 'Captura RTSP, detecta placas y registra movimientos locales.'
     })
   );
+  serviceManager.register({
+    id: 'barriers',
+    name: 'Barreras',
+    group: 'anpr',
+    description: 'Configura las barreras ISAPI disponibles para activacion desde ANPR.',
+    controllable: false,
+    status: async () => ({ running: true, status: 'ready' })
+  });
   serviceManager.register(
     remoteAnprService({
       id: 'rtsp-preview',

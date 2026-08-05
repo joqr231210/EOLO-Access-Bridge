@@ -946,11 +946,58 @@ button:disabled {
 }
 
 .hardware-row.barrier-row {
-  grid-template-columns: repeat(3, minmax(120px, 1fr)) repeat(3, minmax(110px, 1fr)) auto;
+  grid-template-columns: repeat(3, minmax(120px, 1fr)) repeat(2, minmax(110px, 1fr)) auto;
 }
 
 .hardware-row .wide-field {
   grid-column: span 2;
+}
+
+.hardware-row.camera-row {
+  grid-template-columns: repeat(4, minmax(120px, 1fr)) auto;
+}
+
+.barrier-picker {
+  display: grid;
+  gap: 8px;
+  align-self: stretch;
+}
+
+.barrier-picker > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.barrier-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 38px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px;
+  background: #f8fafc;
+}
+
+.barrier-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.82rem;
+  color: var(--text);
+}
+
+.barrier-checkbox input {
+  width: auto;
+}
+
+.muted-inline {
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .hardware-row label {

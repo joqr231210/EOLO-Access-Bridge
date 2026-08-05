@@ -10,6 +10,7 @@ const state = {
   anprHardwareError: null,
   activeServiceTab: 'hikvision-events',
   activeFaceRecognitionTab: 'operation',
+  activeAnprProcessorTab: 'summary',
   deviceCommunicationOk: false,
   lastLocalCommunicationAt: null,
   employees: [],
@@ -33,6 +34,7 @@ const serviceTabs = [
   { id: 'eolo-task-poller', label: 'Tareas Pooling', title: 'Tareas Pooling' },
   { id: 'anpr-api', label: 'Local API ANPR', title: 'Local API ANPR' },
   { id: 'anpr-processor', label: 'Procesador ANPR', title: 'Procesador ANPR' },
+  { id: 'barriers', label: 'Barreras', title: 'Barreras' },
   { id: 'rtsp-preview', label: 'Visualizador Cámaras', title: 'Visualizador Cámaras' },
   { id: 'visit-sync', label: 'Visitas Sync', title: 'Visitas Sync' }
 ];
@@ -363,7 +365,7 @@ async function controlService(serviceId, action) {
     method: 'POST'
   });
   state.services = payload.services || [];
-  if (state.activeServiceTab === serviceId || serviceId.startsWith('anpr') || serviceId === 'visit-sync' || serviceId === 'rtsp-preview') {
+  if (state.activeServiceTab === serviceId || serviceId.startsWith('anpr') || serviceId === 'barriers' || serviceId === 'visit-sync' || serviceId === 'rtsp-preview') {
     const dashboardPayload = await api('/api/anpr/dashboard').catch((error) => {
       state.anprDashboardError = error.message;
       return state.anprDashboard;
@@ -485,6 +487,7 @@ function renderServiceDetail() {
     'eolo-task-poller': renderEoloTasksServiceView,
     'anpr-api': renderAnprApiServiceView,
     'anpr-processor': renderAnprProcessorServiceView,
+    barriers: renderBarriersServiceView,
     'rtsp-preview': renderRtspPreviewServiceView,
     'visit-sync': renderVisitSyncServiceView
   };
@@ -792,46 +795,95 @@ function renderAnprProcessorServiceView() {
   const cfg = anprConfig();
   const access = dashboard().access || {};
   const status = anprService('anpr-processor');
-  return `
-    ${renderAnprUnavailable()}
-    ${renderMetrics([
-      { label: 'Proceso', value: status.running ? 'Activo' : 'Detenido' },
-      { label: 'PID', value: status.pid || '-' },
-      { label: 'Movimientos', value: (access.movements || []).length },
-      { label: 'Pendientes sync', value: access.pending_sync_count ?? '-' }
-    ])}
-    <div class="service-section-grid">
-      <section class="service-section">
-        <h4>Camaras</h4>
-        ${renderTable(
-          [
-            { label: 'Nombre', value: 'name' },
-            { label: 'Tipo', value: 'type' },
-            { label: 'Prefijo', value: 'prefix' },
-            { label: 'RTSP', value: 'rtsp_url' }
-          ],
-          cfg.cameras || [],
-          'Sin camaras ANPR configuradas.'
-        )}
+  const hardware = anprHardware();
+  const activeTab = state.activeAnprProcessorTab || 'summary';
+  const tabs = [
+    { id: 'summary', label: 'Resumen' },
+    { id: 'cameras', label: 'Cámaras' },
+    { id: 'movements', label: 'Movimientos' }
+  ];
+  const tabContent = {
+    summary: `
+      ${renderMetrics([
+        { label: 'Proceso', value: status.running ? 'Activo' : 'Detenido' },
+        { label: 'PID', value: status.pid || '-' },
+        { label: 'Cámaras', value: (cfg.cameras || []).length },
+        { label: 'Barreras', value: (cfg.barriers || []).length },
+        { label: 'Movimientos', value: (access.movements || []).length },
+        { label: 'Pendientes sync', value: access.pending_sync_count ?? '-' }
+      ])}
+      <div class="service-section-grid">
+        <section class="service-section">
+          <h4>Control del proceso</h4>
+          ${renderServiceActions('anpr-processor')}
+          ${renderDefinitionList([
+            { label: 'Deteccion', value: status.running ? 'Procesando streams activos' : 'En espera' },
+            { label: 'Apertura automatica', value: 'Por barreras asociadas a cada cámara' }
+          ])}
+        </section>
+        <section class="service-section">
+          <h4>Cámaras vinculadas</h4>
+          ${renderTable(
+            [
+              { label: 'Nombre', value: 'name' },
+              { label: 'Tipo', value: 'type' },
+              { label: 'Prefijo', value: 'prefix' },
+              { label: 'Barreras', value: 'barrier_count' }
+            ],
+            cfg.cameras || [],
+            'Sin cámaras ANPR configuradas.'
+          )}
+        </section>
+      </div>
+    `,
+    cameras: `
+      ${state.anprHardwareError ? `<div class="service-warning">No se pudo cargar hardware editable: ${escapeHtml(state.anprHardwareError)}</div>` : ''}
+      <section class="service-section wide">
+        <h4>Cámaras ANPR</h4>
+        ${renderCameraHardwareEditor(hardware)}
       </section>
-      <section class="service-section">
-        <h4>Barreras</h4>
-        ${renderTable(
-          [
-            { label: 'ID', value: 'id_barra' },
-            { label: 'Numero', value: 'numero_barra' },
-            { label: 'IP/Puerto', value: 'ip_puerto' },
-            { label: 'Camara', value: 'camera_name' }
-          ],
-          cfg.barriers || [],
-          'Sin barreras configuradas.'
-        )}
-      </section>
+    `,
+    movements: `
       <section class="service-section wide">
         <h4>Movimientos de acceso</h4>
         ${renderAccessMovementsTable(access.movements || [])}
       </section>
+    `
+  };
+  return `
+    ${renderAnprUnavailable()}
+    <div class="service-inner-tabs">
+      ${tabs
+        .map(
+          (tab) => `
+            <button type="button" class="${activeTab === tab.id ? 'active' : ''}" data-anpr-processor-tab="${tab.id}">
+              ${escapeHtml(tab.label)}
+            </button>
+          `
+        )
+        .join('')}
     </div>
+    ${tabContent[activeTab] || tabContent.summary}
+  `;
+}
+
+function renderBarriersServiceView() {
+  const hardware = anprHardware();
+  const status = serviceById('barriers');
+  const barrierCount = (hardware.barriers || []).length || (anprConfig().barriers || []).length;
+  return `
+    ${renderAnprUnavailable()}
+    ${state.anprHardwareError ? `<div class="service-warning">No se pudo cargar hardware editable: ${escapeHtml(state.anprHardwareError)}</div>` : ''}
+    ${renderMetrics([
+      { label: 'Estado', value: status.status === 'ready' ? 'Listo' : status.status || '-' },
+      { label: 'Barreras', value: barrierCount },
+      { label: 'Tipo', value: 'ISAPI' },
+      { label: 'Uso', value: 'Activacion ANPR' }
+    ])}
+    <section class="service-section wide">
+      <h4>Barreras ISAPI</h4>
+      ${renderBarrierHardwareEditor(hardware)}
+    </section>
   `;
 }
 
@@ -858,52 +910,71 @@ function renderRtspPreviewServiceView() {
         ])}
       </section>
       <section class="service-section wide">
-        <h4>Conexion de camaras y barreras</h4>
-        ${renderHardwareEditor(hardware)}
+        <h4>Cámaras disponibles</h4>
+        ${renderTable(
+          [
+            { label: 'Nombre', value: 'name' },
+            { label: 'Tipo', value: 'type' },
+            { label: 'Prefijo', value: 'prefix' }
+          ],
+          hardware.cameras || [],
+          'Sin cámaras disponibles para previsualizar.'
+        )}
       </section>
     </div>
   `;
 }
 
-function renderHardwareEditor(hardware = anprHardware()) {
+function renderCameraHardwareEditor(hardware = anprHardware()) {
   const cameras = hardware.cameras?.length ? hardware.cameras : [emptyCamera()];
-  const barriers = hardware.barriers?.length ? hardware.barriers : [emptyBarrier()];
   return `
     <form class="hardware-form" id="anprHardwareForm">
       <div class="hardware-editor-block">
         <div class="hardware-editor-header">
-          <strong>Camaras RTSP</strong>
-          <button type="button" data-add-camera>Agregar camara</button>
+          <strong>Cámaras RTSP</strong>
+          <button type="button" data-add-camera>Agregar cámara</button>
         </div>
         <div class="hardware-list" id="hardwareCameraRows">
-          ${cameras.map((camera, index) => renderCameraEditorRow(camera, index)).join('')}
+          ${cameras.map((camera, index) => renderCameraEditorRow(camera, index, hardware.barriers || [])).join('')}
         </div>
       </div>
+      <div class="form-actions">
+        <button type="submit">Guardar cámaras</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderBarrierHardwareEditor(hardware = anprHardware()) {
+  const barriers = hardware.barriers?.length ? hardware.barriers : [emptyBarrier()];
+  return `
+    <form class="hardware-form" id="anprHardwareForm">
       <div class="hardware-editor-block">
         <div class="hardware-editor-header">
           <strong>Barreras ISAPI</strong>
           <button type="button" data-add-barrier>Agregar barrera</button>
         </div>
         <div class="hardware-list" id="hardwareBarrierRows">
-          ${barriers.map((barrier, index) => renderBarrierEditorRow(barrier, index, cameras)).join('')}
+          ${barriers.map((barrier, index) => renderBarrierEditorRow(barrier, index)).join('')}
         </div>
       </div>
       <div class="form-actions">
-        <button type="submit">Guardar hardware</button>
+        <button type="submit">Guardar barreras</button>
       </div>
     </form>
   `;
 }
 
 function emptyCamera() {
-  return { name: '', rtsp: '', type: 'Entrada', prefix: '' };
+  return { name: '', rtsp: '', type: 'Entrada', prefix: '', barrier_ids: [] };
 }
 
 function emptyBarrier() {
   return { id_barra: '', numero_barra: '', ip_puerto: '', usuario: '', password: '', camera_name: '' };
 }
 
-function renderCameraEditorRow(camera = emptyCamera(), index = 0) {
+function renderCameraEditorRow(camera = emptyCamera(), index = 0, barriers = []) {
+  const linkedIds = new Set(camera.barrier_ids || []);
   return `
     <div class="hardware-row camera-row" data-camera-row>
       <label>
@@ -925,12 +996,31 @@ function renderCameraEditorRow(camera = emptyCamera(), index = 0) {
         Prefijo
         <input name="camera_prefix_${index}" value="${escapeHtml(camera.prefix || '')}" maxlength="3" placeholder="ENT" />
       </label>
+      <div class="wide-field barrier-picker">
+        <span>Barreras asociadas</span>
+        <div class="barrier-checkboxes">
+          ${barriers.length
+            ? barriers
+                .map((barrier) => {
+                  const id = barrier.id_barra || '';
+                  const label = barrier.numero_barra ? `${barrier.numero_barra} - ${id}` : id;
+                  return `
+                    <label class="barrier-checkbox">
+                      <input type="checkbox" data-camera-barrier-id="${escapeHtml(id)}" ${linkedIds.has(id) ? 'checked' : ''} />
+                      <span>${escapeHtml(label || 'Sin ID')}</span>
+                    </label>
+                  `;
+                })
+                .join('')
+            : '<span class="muted-inline">Registra barreras para vincularlas.</span>'}
+        </div>
+      </div>
       <button type="button" class="danger" data-remove-hardware-row>Eliminar</button>
     </div>
   `;
 }
 
-function renderBarrierEditorRow(barrier = emptyBarrier(), index = 0, cameras = []) {
+function renderBarrierEditorRow(barrier = emptyBarrier(), index = 0) {
   return `
     <div class="hardware-row barrier-row" data-barrier-row>
       <label>
@@ -952,20 +1042,6 @@ function renderBarrierEditorRow(barrier = emptyBarrier(), index = 0, cameras = [
       <label>
         Contrasena
         <input name="barrier_password_${index}" type="password" value="${escapeHtml(barrier.password || '')}" />
-      </label>
-      <label>
-        Camara vinculada
-        <select name="barrier_camera_${index}">
-          <option value="">-- Ninguna --</option>
-          ${cameras
-            .filter((camera) => camera.name)
-            .map(
-              (camera) => `
-                <option value="${escapeHtml(camera.name)}" ${barrier.camera_name === camera.name ? 'selected' : ''}>${escapeHtml(camera.name)}</option>
-              `
-            )
-            .join('')}
-        </select>
       </label>
       <button type="button" class="danger" data-remove-hardware-row>Eliminar</button>
     </div>
@@ -1424,34 +1500,37 @@ async function saveAnprHardware(form) {
 }
 
 function readAnprHardwareForm(form) {
-  const cameras = [...form.querySelectorAll('[data-camera-row]')]
+  const existing = anprHardware();
+  const cameraRows = [...form.querySelectorAll('[data-camera-row]')];
+  const barrierRows = [...form.querySelectorAll('[data-barrier-row]')];
+
+  const cameras = (cameraRows.length ? cameraRows : [])
     .map((row) => ({
       name: row.querySelector('[name^="camera_name_"]')?.value.trim() || '',
       rtsp: row.querySelector('[name^="camera_rtsp_"]')?.value.trim() || '',
       type: row.querySelector('[name^="camera_type_"]')?.value || 'Entrada',
-      prefix: row.querySelector('[name^="camera_prefix_"]')?.value.trim().toUpperCase() || ''
+      prefix: row.querySelector('[name^="camera_prefix_"]')?.value.trim().toUpperCase() || '',
+      barrier_ids: [...row.querySelectorAll('[data-camera-barrier-id]:checked')]
+        .map((input) => input.dataset.cameraBarrierId)
+        .filter(Boolean)
     }))
     .filter((camera) => camera.name || camera.rtsp);
 
-  const barriers = [...form.querySelectorAll('[data-barrier-row]')]
+  const barriers = (barrierRows.length ? barrierRows : [])
     .map((row) => ({
       id_barra: row.querySelector('[name^="barrier_id_"]')?.value.trim() || '',
       numero_barra: row.querySelector('[name^="barrier_number_"]')?.value.trim() || '',
       ip_puerto: row.querySelector('[name^="barrier_ip_"]')?.value.trim() || '',
       usuario: row.querySelector('[name^="barrier_user_"]')?.value.trim() || '',
       password: row.querySelector('[name^="barrier_password_"]')?.value || '',
-      camera_name: row.querySelector('[name^="barrier_camera_"]')?.value || ''
+      camera_name: ''
     }))
     .filter((barrier) => barrier.id_barra);
 
-  return { cameras, barriers };
-}
-
-function cameraOptionsFromHardwareForm(form) {
-  return [...form.querySelectorAll('[data-camera-row]')]
-    .map((row) => row.querySelector('[name^="camera_name_"]')?.value.trim())
-    .filter(Boolean)
-    .map((name) => ({ name }));
+  return {
+    cameras: cameraRows.length ? cameras : existing.cameras || [],
+    barriers: barrierRows.length ? barriers : existing.barriers || []
+  };
 }
 
 function formatEoloRunMessage(result = {}) {
@@ -1706,17 +1785,25 @@ $('#serviceDetail').addEventListener('click', (event) => {
     return;
   }
 
-  const hardwareForm = event.target.closest('#anprHardwareForm');
+  const anprProcessorTab = event.target.closest('[data-anpr-processor-tab]');
+  if (anprProcessorTab) {
+    state.activeAnprProcessorTab = anprProcessorTab.dataset.anprProcessorTab;
+    renderServiceDetail();
+    return;
+  }
+
   if (event.target.closest('[data-add-camera]')) {
     const rows = $('#hardwareCameraRows');
-    rows?.insertAdjacentHTML('beforeend', renderCameraEditorRow(emptyCamera(), rows.querySelectorAll('[data-camera-row]').length));
+    rows?.insertAdjacentHTML(
+      'beforeend',
+      renderCameraEditorRow(emptyCamera(), rows.querySelectorAll('[data-camera-row]').length, anprHardware().barriers || [])
+    );
     return;
   }
 
   if (event.target.closest('[data-add-barrier]')) {
     const rows = $('#hardwareBarrierRows');
-    const cameras = cameraOptionsFromHardwareForm(hardwareForm || $('#anprHardwareForm'));
-    rows?.insertAdjacentHTML('beforeend', renderBarrierEditorRow(emptyBarrier(), rows.querySelectorAll('[data-barrier-row]').length, cameras));
+    rows?.insertAdjacentHTML('beforeend', renderBarrierEditorRow(emptyBarrier(), rows.querySelectorAll('[data-barrier-row]').length));
     return;
   }
 
@@ -1730,8 +1817,8 @@ $('#serviceDetail').addEventListener('click', (event) => {
       list.insertAdjacentHTML(
         'beforeend',
         isCameraList
-          ? renderCameraEditorRow(emptyCamera(), 0)
-          : renderBarrierEditorRow(emptyBarrier(), 0, cameraOptionsFromHardwareForm($('#anprHardwareForm')))
+          ? renderCameraEditorRow(emptyCamera(), 0, anprHardware().barriers || [])
+          : renderBarrierEditorRow(emptyBarrier(), 0)
       );
     }
     return;
