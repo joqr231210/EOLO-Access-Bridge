@@ -870,6 +870,56 @@ button:disabled {
   padding: 12px;
 }
 
+.hardware-form {
+  display: grid;
+  gap: 16px;
+}
+
+.hardware-editor-block {
+  display: grid;
+  gap: 10px;
+}
+
+.hardware-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hardware-list {
+  display: grid;
+  gap: 10px;
+}
+
+.hardware-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.hardware-row.barrier-row {
+  grid-template-columns: repeat(3, minmax(120px, 1fr)) repeat(3, minmax(110px, 1fr)) auto;
+}
+
+.hardware-row .wide-field {
+  grid-column: span 2;
+}
+
+.hardware-row label {
+  min-width: 0;
+}
+
+.hardware-row input,
+.hardware-row select {
+  min-width: 0;
+}
+
 .modal {
   width: min(92vw, 620px);
   border: 1px solid #000000;
@@ -1548,10 +1598,16 @@ button:disabled {
   .employee-row,
   .service-row,
   .service-section-grid,
+  .hardware-row,
+  .hardware-row.barrier-row,
   .events-tabs,
   .event-row,
   .log-row {
     grid-template-columns: 1fr;
+  }
+
+  .hardware-row .wide-field {
+    grid-column: auto;
   }
 
   .service-detail-header,

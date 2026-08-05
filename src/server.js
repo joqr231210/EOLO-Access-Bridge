@@ -300,6 +300,39 @@ app.get(
   })
 );
 
+app.get(
+  '/api/anpr/hardware',
+  asyncRoute(async (_req, res) => {
+    res.json(await fetchAnprJson('/api/hardware'));
+  })
+);
+
+app.put(
+  '/api/anpr/hardware',
+  asyncRoute(async (req, res) => {
+    res.json(
+      await fetchAnprJson('/api/hardware', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req.body),
+        timeoutMs: 10000
+      })
+    );
+  })
+);
+
+app.post(
+  '/api/anpr/barriers/:id/open',
+  asyncRoute(async (req, res) => {
+    res.json(
+      await fetchAnprJson(`/open/${encodeURIComponent(req.params.id)}`, {
+        method: 'POST',
+        timeoutMs: 10000
+      })
+    );
+  })
+);
+
 app.post(
   '/api/anpr/sync-now',
   asyncRoute(async (_req, res) => {
