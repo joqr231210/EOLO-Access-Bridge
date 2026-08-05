@@ -51,7 +51,7 @@ button {
   flex-direction: column;
   gap: 18px;
   border-right: 1px solid var(--line);
-  overflow: hidden;
+  overflow: auto;
 }
 
 .brand {
@@ -81,6 +81,11 @@ button {
   gap: 6px;
 }
 
+.nav-group {
+  display: grid;
+  gap: 4px;
+}
+
 .nav-item {
   width: 100%;
   border: 0;
@@ -91,10 +96,56 @@ button {
   padding: 11px 12px;
 }
 
+.nav-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nav-chevron {
+  color: currentColor;
+  font-size: 14px;
+  line-height: 1;
+}
+
 .nav-item:hover,
 .nav-item.active {
   background: #0b0b0b;
   color: #ffffff;
+}
+
+.nav-submenu {
+  display: grid;
+  gap: 2px;
+  margin-left: 13px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+
+.nav-subitem {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  font-size: 13px;
+}
+
+.nav-subitem:hover,
+.nav-subitem.active {
+  background: #f0f0f0;
+  color: var(--ink);
+}
+
+.nav-group.active .nav-subitem.active {
+  font-weight: 600;
 }
 
 .status-card {
@@ -1465,6 +1516,15 @@ button:disabled {
 
   .nav {
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+
+  .nav-group {
+    min-width: 220px;
+  }
+
+  .nav-submenu {
+    margin-left: 8px;
+    padding-left: 8px;
   }
 
   .topbar,

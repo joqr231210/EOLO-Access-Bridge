@@ -18,7 +18,13 @@
         <nav class="nav">
           <button class="nav-item hidden" data-panel="chat" hidden>Comandos</button>
           <button class="nav-item active" data-panel="employees">Empleados</button>
-          <button class="nav-item" data-panel="services">Servicios</button>
+          <div class="nav-group" id="servicesNavGroup">
+            <button class="nav-item nav-group-toggle" data-panel="services" id="servicesNavToggle" aria-expanded="true">
+              <span>Servicios</span>
+              <span class="nav-chevron" aria-hidden="true">⌄</span>
+            </button>
+            <div class="nav-submenu" id="serviceSidebarMenu" role="menu" aria-label="Servicios"></div>
+          </div>
           <button class="nav-item" data-panel="events">Eventos</button>
           <button class="nav-item" data-panel="settings">Configuracion</button>
         </nav>
@@ -204,7 +210,6 @@
             </div>
             <div class="service-grid" id="serviceGrid"></div>
             <div class="service-workbench">
-              <div class="service-tabs" id="serviceTabs" role="tablist" aria-label="Vistas de servicios"></div>
               <div class="service-detail" id="serviceDetail"></div>
             </div>
           </div>

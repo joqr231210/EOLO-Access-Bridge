@@ -428,7 +428,7 @@ function normalizeEmployee(body) {
 function registerServices() {
   serviceManager.register({
     id: 'hikvision-events',
-    name: 'Eventos Hikvision',
+    name: 'Face Recognition Hikvision',
     group: 'bridge',
     description: 'Escucha eventos del dispositivo local o del simulador.',
     status: async () => {
@@ -445,7 +445,7 @@ function registerServices() {
 
   serviceManager.register({
     id: 'eolo-users-sync',
-    name: 'Sync residentes EOLO',
+    name: 'Residentes Sync',
     group: 'bridge',
     description: 'Sincroniza permisos/residentes EOLO hacia Hikvision.',
     status: async () => ({
@@ -467,7 +467,7 @@ function registerServices() {
 
   serviceManager.register({
     id: 'eolo-task-poller',
-    name: 'Polling tareas EOLO',
+    name: 'Tareas Pooling',
     group: 'bridge',
     description: 'Consulta tareas remotas pendientes para el dispositivo local.',
     status: async () => ({
@@ -492,7 +492,7 @@ function registerServices() {
 
   serviceManager.register({
     id: 'anpr-api',
-    name: 'API ANPR',
+    name: 'Local API ANPR',
     group: 'anpr',
     description: 'API interna Python para configuracion, visitas y control ANPR.',
     controllable: false,
@@ -525,7 +525,7 @@ function registerServices() {
   serviceManager.register(
     remoteAnprService({
       id: 'rtsp-preview',
-      name: 'Preview RTSP',
+      name: 'Visualizador Cámaras',
       baseUrl: config.anpr.baseUrl,
       description: 'Servidor interno de video para previsualizar camaras.'
     })
@@ -533,7 +533,7 @@ function registerServices() {
   serviceManager.register(
     remoteAnprService({
       id: 'visit-sync',
-      name: 'Sync visitas EOLO',
+      name: 'Visitas Sync',
       baseUrl: config.anpr.baseUrl,
       description: 'Sincroniza accesos y estacionamiento locales hacia EOLO Cloud.'
     })

@@ -24,13 +24,13 @@ const eventList = $('#eventList');
 const logList = $('#logList');
 
 const serviceTabs = [
-  { id: 'hikvision-events', label: 'Hikvision', title: 'Eventos Hikvision' },
-  { id: 'eolo-users-sync', label: 'Usuarios EOLO', title: 'Sincronizacion de usuarios EOLO' },
-  { id: 'eolo-task-poller', label: 'Tareas EOLO', title: 'Tareas remotas EOLO' },
-  { id: 'anpr-api', label: 'ANPR API', title: 'Configuracion ANPR' },
-  { id: 'anpr-processor', label: 'ANPR', title: 'Procesador ANPR' },
-  { id: 'rtsp-preview', label: 'RTSP', title: 'Preview RTSP' },
-  { id: 'visit-sync', label: 'Visitas', title: 'Sync de visitas EOLO' }
+  { id: 'hikvision-events', label: 'Face Recognition Hikvision', title: 'Face Recognition Hikvision' },
+  { id: 'eolo-users-sync', label: 'Residentes Sync', title: 'Residentes Sync' },
+  { id: 'eolo-task-poller', label: 'Tareas Pooling', title: 'Tareas Pooling' },
+  { id: 'anpr-api', label: 'Local API ANPR', title: 'Local API ANPR' },
+  { id: 'anpr-processor', label: 'Procesador ANPR', title: 'Procesador ANPR' },
+  { id: 'rtsp-preview', label: 'Visualizador Cámaras', title: 'Visualizador Cámaras' },
+  { id: 'visit-sync', label: 'Visitas Sync', title: 'Visitas Sync' }
 ];
 
 const api = async (path, options = {}) => {
@@ -135,12 +135,28 @@ function setPanel(panelName) {
   });
   document.querySelectorAll('.panel').forEach((panel) => panel.classList.remove('active'));
   $(`#${panelName}Panel`).classList.add('active');
+  updateServicesNavState(panelName);
   if (panelName === 'employees' && $('#directoryTaskPanel').classList.contains('active')) {
     loadEmployees().catch((error) => addMessage('assistant', error.message, { error: true }));
   }
   if (panelName === 'services') {
     loadServices().catch((error) => addMessage('assistant', error.message, { error: true }));
   }
+}
+
+function currentPanelName() {
+  const activePanel = document.querySelector('.panel.active');
+  return activePanel?.id?.replace(/Panel$/, '') || 'employees';
+}
+
+function updateServicesNavState(panelName = currentPanelName()) {
+  const group = $('#servicesNavGroup');
+  const toggle = $('#servicesNavToggle');
+  if (!group || !toggle) return;
+  const servicesActive = panelName === 'services';
+  group.classList.toggle('active', servicesActive);
+  toggle.setAttribute('aria-expanded', 'true');
+  renderServiceSidebar();
 }
 
 function setTaskTab(tabName) {
@@ -359,6 +375,7 @@ function renderServices() {
   if (!grid) return;
   if (!state.services.length) {
     grid.innerHTML = '<div class="empty-state">Sin servicios reportados.</div>';
+    renderServiceSidebar();
     renderServiceTabs();
     renderServiceDetail();
     return;
@@ -389,6 +406,7 @@ function renderServices() {
       `;
     })
     .join('');
+  renderServiceSidebar();
   renderServiceTabs();
   renderServiceDetail();
 }
@@ -404,6 +422,26 @@ function serviceById(serviceId) {
 
 function serviceIsRunning(serviceId) {
   return Boolean(serviceById(serviceId).running);
+}
+
+function renderServiceSidebar() {
+  const menu = $('#serviceSidebarMenu');
+  if (!menu) return;
+  const servicesPanelActive = currentPanelName() === 'services';
+  menu.innerHTML = serviceTabs
+    .map((tab) => {
+      const service = serviceById(tab.id);
+      const running = Boolean(service.running);
+      const active = servicesPanelActive && state.activeServiceTab === tab.id;
+      return `
+        <button class="nav-subitem ${active ? 'active' : ''}" type="button" role="menuitem"
+          data-service-sidebar="${escapeHtml(tab.id)}">
+          <span class="mini-status ${running ? 'running' : 'stopped'}" aria-hidden="true"></span>
+          <span>${escapeHtml(tab.label)}</span>
+        </button>
+      `;
+    })
+    .join('');
 }
 
 function renderServiceTabs() {
@@ -1443,6 +1481,16 @@ document.querySelectorAll('.nav-item').forEach((button) => {
   button.addEventListener('click', () => setPanel(button.dataset.panel));
 });
 
+$('#serviceSidebarMenu')?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-service-sidebar]');
+  if (!button) return;
+  state.activeServiceTab = button.dataset.serviceSidebar;
+  setPanel('services');
+  renderServiceSidebar();
+  renderServiceTabs();
+  renderServiceDetail();
+});
+
 document.querySelectorAll('[data-task-tab]').forEach((button) => {
   button.addEventListener('click', () => setTaskTab(button.dataset.taskTab));
 });
@@ -1479,10 +1527,11 @@ $('#serviceGrid').addEventListener('click', (event) => {
   );
 });
 
-$('#serviceTabs').addEventListener('click', (event) => {
+$('#serviceTabs')?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-service-tab]');
   if (!button) return;
   state.activeServiceTab = button.dataset.serviceTab;
+  renderServiceSidebar();
   renderServiceTabs();
   renderServiceDetail();
 });
@@ -1657,6 +1706,7 @@ addMessage(
   'assistant',
   'Listo para operar.'
 );
+renderServiceSidebar();
 connectSse();
 refreshHealth().catch((error) => addMessage('assistant', error.message));
 loadServices().catch((error) => addMessage('assistant', error.message, { error: true }));
