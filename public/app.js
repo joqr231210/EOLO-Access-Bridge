@@ -794,7 +794,7 @@ function renderVisitSyncServiceView() {
       { label: 'Servicio', value: serviceIsRunning('visit-sync') ? 'Activo' : 'Detenido' },
       { label: 'Mov. pendientes', value: access.pending_sync_count ?? '-' },
       { label: 'Placas residentes', value: access.plate_count ?? '-' },
-      { label: 'Cobros pendientes', value: parking.counts?.pending_charges ?? '-' }
+      { label: 'Inventario pendiente', value: parking.counts?.inventory ?? '-' }
     ])}
     <div class="service-section-grid">
       <section class="service-section">
@@ -853,19 +853,6 @@ function renderVisitSyncServiceView() {
           ],
           parking.movements || [],
           'Sin salidas registradas.'
-        )}
-      </section>
-      <section class="service-section">
-        <h4>Cobros registrados</h4>
-        ${renderTable(
-          [
-            { label: 'Placa', value: 'placa' },
-            { label: 'Reserva', value: 'uid_reserva' },
-            { label: 'Total', value: 'monto_total', type: 'money' },
-            { label: 'Sync', value: 'sync', type: 'sync' }
-          ],
-          parking.charges || [],
-          'Sin cobros registrados.'
         )}
       </section>
     </div>
