@@ -57,6 +57,25 @@ const asyncRoute = (handler) => async (req, res, next) => {
   }
 };
 
+async function fetchAnprJson(pathname, options = {}) {
+  const { timeoutMs = 8000, ...fetchOptions } = options;
+  const response = await fetch(`${config.anpr.baseUrl}${pathname}`, {
+    ...fetchOptions,
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  const contentType = response.headers.get('content-type') || '';
+  const payload = contentType.includes('application/json')
+    ? await response.json()
+    : await response.text();
+  if (!response.ok) {
+    const error = new Error(payload.error || payload.detail || response.statusText);
+    error.status = response.status;
+    error.body = payload;
+    throw error;
+  }
+  return payload;
+}
+
 app.get(
   '/api/health',
   asyncRoute(async (_req, res) => {
@@ -271,6 +290,20 @@ app.post(
   asyncRoute(async (_req, res) => {
     const result = await eoloUserSync.runOnce();
     res.json(result);
+  })
+);
+
+app.get(
+  '/api/anpr/dashboard',
+  asyncRoute(async (_req, res) => {
+    res.json(await fetchAnprJson('/api/dashboard'));
+  })
+);
+
+app.post(
+  '/api/anpr/sync-now',
+  asyncRoute(async (_req, res) => {
+    res.json(await fetchAnprJson('/api/sync_now', { method: 'POST', timeoutMs: 20000 }));
   })
 );
 

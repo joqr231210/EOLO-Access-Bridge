@@ -4,6 +4,9 @@ const state = {
   events: [],
   logs: [],
   services: [],
+  anprDashboard: null,
+  anprDashboardError: null,
+  activeServiceTab: 'hikvision-events',
   deviceCommunicationOk: false,
   lastLocalCommunicationAt: null,
   employees: [],
@@ -19,6 +22,16 @@ const $ = (selector) => document.querySelector(selector);
 const chatWindow = $('#chatWindow');
 const eventList = $('#eventList');
 const logList = $('#logList');
+
+const serviceTabs = [
+  { id: 'hikvision-events', label: 'Hikvision', title: 'Eventos Hikvision' },
+  { id: 'eolo-users-sync', label: 'Usuarios EOLO', title: 'Sincronizacion de usuarios EOLO' },
+  { id: 'eolo-task-poller', label: 'Tareas EOLO', title: 'Tareas remotas EOLO' },
+  { id: 'anpr-api', label: 'ANPR API', title: 'Configuracion ANPR' },
+  { id: 'anpr-processor', label: 'ANPR', title: 'Procesador ANPR' },
+  { id: 'rtsp-preview', label: 'RTSP', title: 'Preview RTSP' },
+  { id: 'visit-sync', label: 'Visitas', title: 'Sync de visitas EOLO' }
+];
 
 const api = async (path, options = {}) => {
   const response = await fetch(path, options);
@@ -310,8 +323,14 @@ function updateStreamToggle(health = state.health) {
 }
 
 async function loadServices() {
-  const payload = await api('/api/services');
+  const [payload, anprDashboard] = await Promise.all([
+    api('/api/services'),
+    api('/api/anpr/dashboard').catch((error) => ({ ok: false, error: error.message }))
+  ]);
   state.services = payload.services || [];
+  state.anprDashboardError = anprDashboard.ok === false ? anprDashboard.error : null;
+  state.anprDashboard = anprDashboard.ok === false ? null : anprDashboard;
+  ensureActiveServiceTab();
   renderServices();
   return payload;
 }
@@ -321,6 +340,16 @@ async function controlService(serviceId, action) {
     method: 'POST'
   });
   state.services = payload.services || [];
+  if (state.activeServiceTab === serviceId || serviceId.startsWith('anpr') || serviceId === 'visit-sync' || serviceId === 'rtsp-preview') {
+    const dashboardPayload = await api('/api/anpr/dashboard').catch((error) => {
+      state.anprDashboardError = error.message;
+      return state.anprDashboard;
+    });
+    if (dashboardPayload?.ok !== false) {
+      state.anprDashboard = dashboardPayload;
+      state.anprDashboardError = null;
+    }
+  }
   renderServices();
   addMessage('assistant', `Servicio ${serviceId}: ${action}.`, payload.service || payload);
 }
@@ -330,6 +359,8 @@ function renderServices() {
   if (!grid) return;
   if (!state.services.length) {
     grid.innerHTML = '<div class="empty-state">Sin servicios reportados.</div>';
+    renderServiceTabs();
+    renderServiceDetail();
     return;
   }
 
@@ -358,6 +389,507 @@ function renderServices() {
       `;
     })
     .join('');
+  renderServiceTabs();
+  renderServiceDetail();
+}
+
+function ensureActiveServiceTab() {
+  if (serviceTabs.some((tab) => tab.id === state.activeServiceTab)) return;
+  state.activeServiceTab = serviceTabs[0].id;
+}
+
+function serviceById(serviceId) {
+  return state.services.find((service) => service.id === serviceId) || {};
+}
+
+function serviceIsRunning(serviceId) {
+  return Boolean(serviceById(serviceId).running);
+}
+
+function renderServiceTabs() {
+  const tabs = $('#serviceTabs');
+  if (!tabs) return;
+  tabs.innerHTML = serviceTabs
+    .map((tab) => {
+      const service = serviceById(tab.id);
+      const running = Boolean(service.running);
+      const active = state.activeServiceTab === tab.id;
+      return `
+        <button class="service-tab-button ${active ? 'active' : ''}" type="button" role="tab"
+          aria-selected="${active}" data-service-tab="${escapeHtml(tab.id)}">
+          <span class="mini-status ${running ? 'running' : 'stopped'}" aria-hidden="true"></span>
+          <span>${escapeHtml(tab.label)}</span>
+        </button>
+      `;
+    })
+    .join('');
+}
+
+function renderServiceDetail() {
+  const detail = $('#serviceDetail');
+  if (!detail) return;
+  const tab = serviceTabs.find((item) => item.id === state.activeServiceTab) || serviceTabs[0];
+  const service = serviceById(tab.id);
+  const renderers = {
+    'hikvision-events': renderHikvisionServiceView,
+    'eolo-users-sync': renderEoloUsersServiceView,
+    'eolo-task-poller': renderEoloTasksServiceView,
+    'anpr-api': renderAnprApiServiceView,
+    'anpr-processor': renderAnprProcessorServiceView,
+    'rtsp-preview': renderRtspPreviewServiceView,
+    'visit-sync': renderVisitSyncServiceView
+  };
+  detail.innerHTML = `
+    <div class="service-detail-header">
+      <div>
+        <h3>${escapeHtml(tab.title)}</h3>
+        <p>${escapeHtml(service.description || 'Vista operativa del servicio seleccionado.')}</p>
+      </div>
+      ${renderServiceStatusPill(service)}
+    </div>
+    ${(renderers[tab.id] || renderEmptyServiceView)(service)}
+  `;
+}
+
+function renderServiceStatusPill(service = {}) {
+  const running = Boolean(service.running);
+  const status = service.status || (running ? 'running' : 'stopped');
+  return `<span class="status-pill ${running ? 'ok' : 'idle'}">${escapeHtml(status)}</span>`;
+}
+
+function renderMetrics(items) {
+  return `
+    <div class="metric-strip">
+      ${items
+        .map(
+          (item) => `
+            <div class="metric-item">
+              <span>${escapeHtml(item.label)}</span>
+              <strong>${escapeHtml(item.value ?? '-')}</strong>
+            </div>
+          `
+        )
+        .join('')}
+    </div>
+  `;
+}
+
+function renderDefinitionList(items) {
+  return `
+    <dl class="service-def-list">
+      ${items
+        .map(
+          (item) => `
+            <div>
+              <dt>${escapeHtml(item.label)}</dt>
+              <dd>${escapeHtml(item.value ?? '-')}</dd>
+            </div>
+          `
+        )
+        .join('')}
+    </dl>
+  `;
+}
+
+function renderTable(headers, rows, emptyText = 'Sin registros para mostrar.') {
+  if (!rows.length) {
+    return `<div class="empty-state compact">${escapeHtml(emptyText)}</div>`;
+  }
+  return `
+    <div class="service-table-wrap">
+      <table class="service-table">
+        <thead>
+          <tr>${headers.map((header) => `<th>${escapeHtml(header.label)}</th>`).join('')}</tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map(
+              (row) => `
+                <tr>
+                  ${headers
+                    .map((header) => `<td>${escapeHtml(resolveCell(row, header))}</td>`)
+                    .join('')}
+                </tr>
+              `
+            )
+            .join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function resolveCell(row, header) {
+  const value = typeof header.value === 'function' ? header.value(row) : row[header.value];
+  if (header.type === 'sync') return Number(value) === 1 ? 'Sincronizado' : 'Pendiente';
+  if (header.type === 'bool') return value ? 'Si' : 'No';
+  if (header.type === 'money') return value === null || value === undefined ? '-' : `$${Number(value).toFixed(2)}`;
+  return value === null || value === undefined || value === '' ? '-' : value;
+}
+
+function dashboard() {
+  return state.anprDashboard || {};
+}
+
+function anprConfig() {
+  return dashboard().config || {};
+}
+
+function anprServices() {
+  return dashboard().services || {};
+}
+
+function anprService(serviceId) {
+  return anprServices()[serviceId] || {};
+}
+
+function renderAnprUnavailable() {
+  if (!state.anprDashboardError) return '';
+  return `<div class="service-warning">ANPR no responde: ${escapeHtml(state.anprDashboardError)}</div>`;
+}
+
+function renderServiceActions(serviceId, options = {}) {
+  const service = serviceById(serviceId);
+  const running = Boolean(service.running);
+  const disabled = service.controllable === false;
+  return `
+    <div class="inline-actions">
+      <button type="button" data-service-action="start" data-service-id="${escapeHtml(serviceId)}" ${disabled || running ? 'disabled' : ''}>Iniciar</button>
+      <button type="button" data-service-action="stop" data-service-id="${escapeHtml(serviceId)}" ${disabled || !running ? 'disabled' : ''}>Detener</button>
+      <button type="button" data-service-action="restart" data-service-id="${escapeHtml(serviceId)}" ${disabled ? 'disabled' : ''}>Reiniciar</button>
+      ${options.extra || ''}
+    </div>
+  `;
+}
+
+function renderHikvisionServiceView() {
+  const stream = state.health?.stream || {};
+  const device = state.deviceConfig?.hikvision || {};
+  const events = state.events.slice(-20).reverse();
+  return `
+    ${renderMetrics([
+      { label: 'Estado stream', value: stream.running ? 'Activo' : 'Detenido' },
+      { label: 'Eventos en memoria', value: state.events.length },
+      { label: 'Dispositivo', value: device.host || state.health?.deviceHost || '-' },
+      { label: 'Modo', value: state.health?.mode || '-' }
+    ])}
+    <div class="service-section-grid">
+      <section class="service-section">
+        <h4>Proceso</h4>
+        ${renderDefinitionList([
+          { label: 'Destino', value: `${device.protocol || state.health?.deviceProtocol || 'http'}://${device.host || state.health?.deviceHost || '-'}:${device.port || state.health?.devicePort || '-'}` },
+          { label: 'Puerta', value: device.doorNo || '-' },
+          { label: 'Ventana anti-duplicados', value: `${device.dedupWindowSeconds || '-'} s` }
+        ])}
+      </section>
+      <section class="service-section">
+        <h4>Registro reciente</h4>
+        ${renderTable(
+          [
+            { label: 'Empleado', value: (row) => row.employeeNo || row.name },
+            { label: 'Nombre', value: 'name' },
+            { label: 'Modo', value: 'currentVerifyMode' },
+            { label: 'Hora', value: (row) => row.dateTime || row.receivedAt }
+          ],
+          events,
+          'Sin eventos Hikvision recibidos.'
+        )}
+      </section>
+    </div>
+  `;
+}
+
+function renderEoloUsersServiceView() {
+  const sync = state.health?.eoloUserSync || {};
+  return `
+    ${renderMetrics([
+      { label: 'Servicio', value: serviceIsRunning('eolo-users-sync') ? 'Activo' : 'Detenido' },
+      { label: 'Intervalo', value: `${sync.intervalMinutes || '-'} min` },
+      { label: 'Ultima corrida', value: sync.lastRunAt || 'Sin ejecucion' },
+      { label: 'Configuracion', value: sync.enabled ? 'Habilitada' : 'Deshabilitada' }
+    ])}
+    <div class="service-section-grid">
+      <section class="service-section">
+        <h4>Conectividad EOLO</h4>
+        ${renderDefinitionList([
+          { label: 'Acceso', value: sync.accessSet ? 'Configurado' : 'Pendiente' },
+          { label: 'ID dispositivo local', value: sync.localDeviceIdSet ? 'Configurado' : 'Pendiente' },
+          { label: 'Token', value: sync.tokenSet ? 'Guardado' : 'Pendiente' },
+          { label: 'Ejecucion en curso', value: sync.running ? 'Si' : 'No' }
+        ])}
+        <div class="inline-actions">
+          <button type="button" data-run-users-sync>Sincronizar ahora</button>
+        </div>
+      </section>
+      <section class="service-section">
+        <h4>Directorio local</h4>
+        ${renderMetrics([
+          { label: 'Empleados cargados en vista', value: state.employees.length },
+          { label: 'Total ultima busqueda', value: state.employeePage.total }
+        ])}
+      </section>
+    </div>
+  `;
+}
+
+function renderEoloTasksServiceView() {
+  const service = serviceById('eolo-task-poller');
+  const logs = state.logs
+    .filter((record) => String(record.message || '').toLowerCase().includes('tarea') || String(record.source || '').includes('task'))
+    .slice(-20)
+    .reverse();
+  return `
+    ${renderMetrics([
+      { label: 'Polling', value: service.running ? 'Activo' : 'Detenido' },
+      { label: 'Servicio habilitado', value: service.enabled ? 'Si' : 'No' },
+      { label: 'Estado', value: service.status || '-' },
+      { label: 'Logs relacionados', value: logs.length }
+    ])}
+    <div class="service-section-grid">
+      <section class="service-section">
+        <h4>Control</h4>
+        ${renderServiceActions('eolo-task-poller', {
+          extra: '<button type="button" data-run-task-poll>Consultar tareas</button>'
+        })}
+      </section>
+      <section class="service-section">
+        <h4>Registro</h4>
+        ${renderTable(
+          [
+            { label: 'Hora', value: 'ts' },
+            { label: 'Nivel', value: 'level' },
+            { label: 'Mensaje', value: (row) => formatLogMessage(row) }
+          ],
+          logs,
+          'Sin logs recientes de tareas.'
+        )}
+      </section>
+    </div>
+  `;
+}
+
+function renderAnprApiServiceView() {
+  const cfg = anprConfig();
+  return `
+    ${renderAnprUnavailable()}
+    ${renderMetrics([
+      { label: 'Camara(s)', value: (cfg.cameras || []).length },
+      { label: 'Barrera(s)', value: (cfg.barriers || []).length },
+      { label: 'Bubble', value: cfg.bubble_token_set ? 'Token guardado' : 'Sin token' },
+      { label: 'Version', value: cfg.version || '-' }
+    ])}
+    <div class="service-section-grid">
+      <section class="service-section">
+        <h4>Configuracion general</h4>
+        ${renderDefinitionList([
+          { label: 'Servidor ANPR', value: cfg.server_url || '-' },
+          { label: 'ID acceso', value: cfg.id_acceso || '-' },
+          { label: 'ID estacionamiento', value: cfg.id_estacionamiento || '-' },
+          { label: 'Archivo DB', value: dashboard().db_file || '-' }
+        ])}
+      </section>
+      <section class="service-section">
+        <h4>Filtros de deteccion</h4>
+        ${renderDefinitionList([
+          { label: 'Min. ancho placa', value: cfg.min_plate_width_ratio ?? '-' },
+          { label: 'Min. alto placa', value: cfg.min_plate_height_ratio ?? '-' },
+          { label: 'Requiere vehiculo', value: cfg.require_vehicle_detection ? 'Si' : 'No' },
+          { label: 'Confianza vehiculo', value: cfg.min_vehicle_confidence ?? '-' }
+        ])}
+      </section>
+    </div>
+  `;
+}
+
+function renderAnprProcessorServiceView() {
+  const cfg = anprConfig();
+  const access = dashboard().access || {};
+  const status = anprService('anpr-processor');
+  return `
+    ${renderAnprUnavailable()}
+    ${renderMetrics([
+      { label: 'Proceso', value: status.running ? 'Activo' : 'Detenido' },
+      { label: 'PID', value: status.pid || '-' },
+      { label: 'Movimientos', value: (access.movements || []).length },
+      { label: 'Pendientes sync', value: access.pending_sync_count ?? '-' }
+    ])}
+    <div class="service-section-grid">
+      <section class="service-section">
+        <h4>Camaras</h4>
+        ${renderTable(
+          [
+            { label: 'Nombre', value: 'name' },
+            { label: 'Tipo', value: 'type' },
+            { label: 'Prefijo', value: 'prefix' },
+            { label: 'RTSP', value: 'rtsp_url' }
+          ],
+          cfg.cameras || [],
+          'Sin camaras ANPR configuradas.'
+        )}
+      </section>
+      <section class="service-section">
+        <h4>Barreras</h4>
+        ${renderTable(
+          [
+            { label: 'ID', value: 'id_barra' },
+            { label: 'Numero', value: 'numero_barra' },
+            { label: 'IP/Puerto', value: 'ip_puerto' },
+            { label: 'Camara', value: 'camera_name' }
+          ],
+          cfg.barriers || [],
+          'Sin barreras configuradas.'
+        )}
+      </section>
+      <section class="service-section wide">
+        <h4>Movimientos de acceso</h4>
+        ${renderAccessMovementsTable(access.movements || [])}
+      </section>
+    </div>
+  `;
+}
+
+function renderRtspPreviewServiceView() {
+  const cfg = anprConfig();
+  const status = anprService('rtsp-preview');
+  return `
+    ${renderAnprUnavailable()}
+    ${renderMetrics([
+      { label: 'Preview', value: status.running ? 'Activo' : 'Detenido' },
+      { label: 'PID', value: status.pid || '-' },
+      { label: 'Camara(s)', value: (cfg.cameras || []).length },
+      { label: 'Puerto interno', value: '8083' }
+    ])}
+    <div class="service-section-grid">
+      <section class="service-section">
+        <h4>Control RTSP</h4>
+        ${renderServiceActions('rtsp-preview')}
+        ${renderDefinitionList([
+          { label: 'Publicacion', value: 'Interna al contenedor ANPR' },
+          { label: 'Base', value: 'http://anpr-api:8083' }
+        ])}
+      </section>
+      <section class="service-section">
+        <h4>Streams configurados</h4>
+        ${renderTable(
+          [
+            { label: 'Nombre', value: 'name' },
+            { label: 'Tipo', value: 'type' },
+            { label: 'Tiene RTSP', value: 'has_rtsp', type: 'bool' },
+            { label: 'URL', value: 'rtsp_url' }
+          ],
+          cfg.cameras || [],
+          'Sin streams configurados.'
+        )}
+      </section>
+    </div>
+  `;
+}
+
+function renderVisitSyncServiceView() {
+  const access = dashboard().access || {};
+  const parking = dashboard().parking || {};
+  return `
+    ${renderAnprUnavailable()}
+    ${renderMetrics([
+      { label: 'Servicio', value: serviceIsRunning('visit-sync') ? 'Activo' : 'Detenido' },
+      { label: 'Mov. pendientes', value: access.pending_sync_count ?? '-' },
+      { label: 'Placas residentes', value: access.plate_count ?? '-' },
+      { label: 'Cobros pendientes', value: parking.counts?.pending_charges ?? '-' }
+    ])}
+    <div class="service-section-grid">
+      <section class="service-section">
+        <h4>Sincronizacion</h4>
+        ${renderServiceActions('visit-sync', {
+          extra: '<button type="button" data-run-visit-sync>Sincronizar ahora</button>'
+        })}
+      </section>
+      <section class="service-section">
+        <h4>Placas base</h4>
+        ${renderTable(
+          [
+            { label: 'Placa', value: 'placa' },
+            { label: 'Nombre', value: 'nombre' },
+            { label: 'Telefono', value: 'telefono' }
+          ],
+          access.plates || [],
+          'Sin placas residentes cargadas.'
+        )}
+      </section>
+      <section class="service-section wide">
+        <h4>Accesos recientes</h4>
+        ${renderAccessMovementsTable(access.movements || [])}
+      </section>
+      <section class="service-section">
+        <h4>Exentos pendientes</h4>
+        ${renderTable(
+          [
+            { label: 'Placa', value: 'placa' },
+            { label: 'Movimiento', value: 'id_movimiento' }
+          ],
+          parking.exempt_pending || [],
+          'Sin exentos pendientes.'
+        )}
+      </section>
+      <section class="service-section">
+        <h4>Inventario pendiente</h4>
+        ${renderTable(
+          [
+            { label: 'Placa', value: 'placa' },
+            { label: 'Reserva', value: 'uid_reserva' },
+            { label: 'Total', value: 'total_por_pagar', type: 'money' }
+          ],
+          parking.inventory || [],
+          'Sin inventario pendiente.'
+        )}
+      </section>
+      <section class="service-section">
+        <h4>Salidas estacionamiento</h4>
+        ${renderTable(
+          [
+            { label: 'Placa', value: 'placa' },
+            { label: 'Reserva', value: 'id_movimiento_reserva' },
+            { label: 'Fecha', value: 'fecha_salida' },
+            { label: 'Sync', value: 'sync', type: 'sync' }
+          ],
+          parking.movements || [],
+          'Sin salidas registradas.'
+        )}
+      </section>
+      <section class="service-section">
+        <h4>Cobros registrados</h4>
+        ${renderTable(
+          [
+            { label: 'Placa', value: 'placa' },
+            { label: 'Reserva', value: 'uid_reserva' },
+            { label: 'Total', value: 'monto_total', type: 'money' },
+            { label: 'Sync', value: 'sync', type: 'sync' }
+          ],
+          parking.charges || [],
+          'Sin cobros registrados.'
+        )}
+      </section>
+    </div>
+  `;
+}
+
+function renderAccessMovementsTable(rows) {
+  return renderTable(
+    [
+      { label: 'Folio', value: 'folio' },
+      { label: 'Placa', value: 'placa' },
+      { label: 'Entrada', value: 'fecha_entrada' },
+      { label: 'Salida', value: 'fecha_salida' },
+      { label: 'Cam. entrada', value: 'camara_entrada' },
+      { label: 'Cam. salida', value: 'camara_salida' },
+      { label: 'Sync', value: 'sync', type: 'sync' }
+    ],
+    rows,
+    'Sin movimientos de acceso.'
+  );
+}
+
+function renderEmptyServiceView() {
+  return '<div class="empty-state compact">Selecciona un servicio para ver su proceso.</div>';
 }
 
 async function submitEmployee(form, action) {
@@ -717,6 +1249,24 @@ async function runEoloUserSync() {
   return result;
 }
 
+async function runEoloTaskPoll() {
+  const result = await api('/api/eolo/tasks/poll', {
+    method: 'POST'
+  });
+  addMessage('assistant', `Consulta de tareas EOLO completada: ${result.processed || 0} procesadas.`, result);
+  await loadServices().catch(() => {});
+  return result;
+}
+
+async function runVisitSyncNow() {
+  const result = await api('/api/anpr/sync-now', {
+    method: 'POST'
+  });
+  addMessage('assistant', 'Sincronizacion de visitas ANPR ejecutada.', result);
+  await loadServices().catch(() => {});
+  return result;
+}
+
 function formatEoloRunMessage(result = {}) {
   if (result.skipped) {
     return `Sincronizacion EOLO omitida: ${result.reason || 'ya hay una sincronizacion en curso'}.`;
@@ -884,18 +1434,21 @@ function connectSse() {
     state.logs = payload.logs || [];
     renderEvents();
     renderLogs();
+    renderServiceDetail();
     updateLatestLog();
   });
   source.addEventListener('device-event', (event) => {
     const payload = JSON.parse(event.data);
     state.events.push(payload);
     renderEvents();
+    renderServiceDetail();
   });
   source.addEventListener('log', (event) => {
     const payload = JSON.parse(event.data);
     state.logs.push(payload);
     updateLatestLog(payload);
     renderLogs();
+    renderServiceDetail();
   });
 }
 
@@ -937,6 +1490,40 @@ $('#serviceGrid').addEventListener('click', (event) => {
   controlService(button.dataset.serviceId, button.dataset.serviceAction).catch((error) =>
     addMessage('assistant', error.message, { error: true })
   );
+});
+
+$('#serviceTabs').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-service-tab]');
+  if (!button) return;
+  state.activeServiceTab = button.dataset.serviceTab;
+  renderServiceTabs();
+  renderServiceDetail();
+});
+
+$('#serviceDetail').addEventListener('click', (event) => {
+  const actionButton = event.target.closest('[data-service-action]');
+  if (actionButton) {
+    controlService(actionButton.dataset.serviceId, actionButton.dataset.serviceAction).catch((error) =>
+      addMessage('assistant', error.message, { error: true })
+    );
+    return;
+  }
+
+  if (event.target.closest('[data-run-users-sync]')) {
+    runEoloUserSync().then(() => loadServices()).catch((error) =>
+      addMessage('assistant', error.message, { error: true })
+    );
+    return;
+  }
+
+  if (event.target.closest('[data-run-task-poll]')) {
+    runEoloTaskPoll().catch((error) => addMessage('assistant', error.message, { error: true }));
+    return;
+  }
+
+  if (event.target.closest('[data-run-visit-sync]')) {
+    runVisitSyncNow().catch((error) => addMessage('assistant', error.message, { error: true }));
+  }
 });
 
 $('#latestLogBar').addEventListener('click', openLatestLog);

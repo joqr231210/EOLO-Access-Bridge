@@ -599,6 +599,226 @@ button:disabled {
   min-height: 34px;
 }
 
+.service-workbench {
+  display: grid;
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.service-tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.service-tab-button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--muted);
+}
+
+.service-tab-button.active {
+  background: #0b0b0b;
+  color: #ffffff;
+}
+
+.mini-status {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #8b8b8b;
+}
+
+.mini-status.running {
+  background: #16a34a;
+}
+
+.service-detail {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.service-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 2px;
+}
+
+.service-detail-header p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.status-pill {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 10px;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.status-pill.ok {
+  border-color: #9fd7ad;
+  color: #166534;
+}
+
+.status-pill.idle {
+  border-color: #d8d8d8;
+}
+
+.metric-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 8px;
+}
+
+.metric-item {
+  min-height: 68px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px;
+  background: var(--panel-subtle);
+}
+
+.metric-item span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.metric-item strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 17px;
+}
+
+.service-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.service-section {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.service-section.wide {
+  grid-column: 1 / -1;
+}
+
+.service-section h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.service-def-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.service-def-list div {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 32px;
+  align-items: start;
+}
+
+.service-def-list dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.service-def-list dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.service-table-wrap {
+  width: 100%;
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+.service-table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.service-table th,
+.service-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.service-table th {
+  position: sticky;
+  top: 0;
+  background: #f4f4f4;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.service-table td {
+  overflow-wrap: anywhere;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.service-warning {
+  border: 1px solid #efa3a3;
+  border-radius: 4px;
+  padding: 10px 12px;
+  background: #fffafa;
+  color: #7f1d1d;
+  font-size: 13px;
+}
+
+.empty-state.compact {
+  min-height: 76px;
+  padding: 12px;
+}
+
 .modal {
   width: min(92vw, 620px);
   border: 1px solid #000000;
@@ -1264,25 +1484,41 @@ button:disabled {
   .settings-layout,
   .directory-toolbar,
   .directory-search,
-    .employee-table-head,
-    .employee-row,
-    .service-row,
-    .events-tabs,
-    .event-row,
-    .log-row {
+  .employee-table-head,
+  .employee-row,
+  .service-row,
+  .service-section-grid,
+  .events-tabs,
+  .event-row,
+  .log-row {
     grid-template-columns: 1fr;
+  }
+
+  .service-detail-header,
+  .service-def-list div {
+    grid-template-columns: 1fr;
+  }
+
+  .service-detail-header {
+    display: grid;
   }
 
   .row-actions,
   .service-actions,
+  .inline-actions,
   .employee-pagination,
   .directory-toolbar {
     align-items: stretch;
   }
 
   .row-actions,
-  .service-actions {
+  .service-actions,
+  .inline-actions {
     justify-content: start;
+  }
+
+  .service-tabs {
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   }
 
   .employee-pagination {
