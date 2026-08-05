@@ -45,6 +45,9 @@ export const config = {
       'https://eolo.app/version-test/api/1.1/wf/permisos-acceso',
     access: process.env.EOLO_ACCESS || '',
     userSyncIntervalMs: intFromEnv('EOLO_USER_SYNC_INTERVAL_MINUTES', 30) * 60 * 1000
+  },
+  anpr: {
+    baseUrl: process.env.ANPR_API_BASE_URL || 'http://127.0.0.1:8090'
   }
 };
 

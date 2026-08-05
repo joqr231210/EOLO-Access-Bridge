@@ -18,6 +18,7 @@
         <nav class="nav">
           <button class="nav-item hidden" data-panel="chat" hidden>Comandos</button>
           <button class="nav-item active" data-panel="employees">Empleados</button>
+          <button class="nav-item" data-panel="services">Servicios</button>
           <button class="nav-item" data-panel="events">Eventos</button>
           <button class="nav-item" data-panel="settings">Configuracion</button>
         </nav>
@@ -194,6 +195,16 @@
             </div>
           </form>
         </dialog>
+
+        <section class="panel" id="servicesPanel">
+          <div class="tool-card full">
+            <div class="card-header">
+              <h2>Servicios</h2>
+              <button id="refreshServicesBtn" type="button">Actualizar</button>
+            </div>
+            <div class="service-grid" id="serviceGrid"></div>
+          </div>
+        </section>
 
         <section class="panel" id="eventsPanel">
           <div class="events-tabs" role="tablist" aria-label="Eventos y logs">

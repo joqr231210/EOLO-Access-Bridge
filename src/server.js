@@ -13,6 +13,7 @@ import { DeviceEventStream } from './eventStream.js';
 import { TaskRunner } from './taskRunner.js';
 import { bus, ensureDataDirs, getEvents, getLogs, log } from './logger.js';
 import { loadRuntimeConfig, publicRuntimeConfig, saveRuntimeConfig } from './runtimeConfig.js';
+import { ServiceManager, remoteAnprService } from './serviceManager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '../public');
@@ -35,6 +36,8 @@ let device = createDevice();
 let eventStream = createEventStream();
 let taskRunner = new TaskRunner(device, eoloClient);
 let eoloUserSync = new EoloUserSync(device, eoloClient);
+const serviceManager = new ServiceManager();
+registerServices();
 
 app.use(cors());
 app.use(
@@ -67,6 +70,40 @@ app.get(
       eoloUserSync: eoloUserSync.status(),
       stream: eventStream?.status() || { running: Boolean(device.interval) }
     });
+  })
+);
+
+app.get(
+  '/api/services',
+  asyncRoute(async (_req, res) => {
+    res.json({ services: await serviceManager.list() });
+  })
+);
+
+app.post(
+  '/api/services/:id/start',
+  asyncRoute(async (req, res) => {
+    const service = await serviceManager.start(req.params.id);
+    await log('info', 'Servicio iniciado desde Bridge', { serviceId: req.params.id });
+    res.json({ ok: true, service, services: await serviceManager.list() });
+  })
+);
+
+app.post(
+  '/api/services/:id/stop',
+  asyncRoute(async (req, res) => {
+    const service = await serviceManager.stop(req.params.id);
+    await log('info', 'Servicio detenido desde Bridge', { serviceId: req.params.id });
+    res.json({ ok: true, service, services: await serviceManager.list() });
+  })
+);
+
+app.post(
+  '/api/services/:id/restart',
+  asyncRoute(async (req, res) => {
+    const service = await serviceManager.restart(req.params.id);
+    await log('info', 'Servicio reiniciado desde Bridge', { serviceId: req.params.id });
+    res.json({ ok: true, service, services: await serviceManager.list() });
   })
 );
 
@@ -279,26 +316,16 @@ app.get('/api/events/stream', (req, res) => {
 app.post(
   '/api/device/stream/start',
   asyncRoute(async (_req, res) => {
-    if (config.mockDevice) {
-      device.startAutoEvents();
-      await log('info', 'Eventos mock iniciados');
-      res.json({ ok: true, running: true, mode: 'mock' });
-      return;
-    }
-    const status = await eventStream.start();
-    res.json({ ok: true, ...status });
+    res.json({ ok: true, ...(await startDeviceEventService()) });
   })
 );
 
-app.post('/api/device/stream/stop', (req, res) => {
-  if (config.mockDevice) {
-    device.stopAutoEvents();
-    log('info', 'Eventos mock detenidos').catch(() => {});
-    res.json({ ok: true, running: false, mode: 'mock' });
-    return;
-  }
-  res.json({ ok: true, ...eventStream.stop() });
-});
+app.post(
+  '/api/device/stream/stop',
+  asyncRoute(async (_req, res) => {
+    res.json({ ok: true, ...(await stopDeviceEventService()) });
+  })
+);
 
 app.post(
   '/api/mock/event',
@@ -365,6 +392,121 @@ function normalizeEmployee(body) {
   };
 }
 
+function registerServices() {
+  serviceManager.register({
+    id: 'hikvision-events',
+    name: 'Eventos Hikvision',
+    group: 'bridge',
+    description: 'Escucha eventos del dispositivo local o del simulador.',
+    status: async () => {
+      const running = config.mockDevice ? Boolean(device.interval) : Boolean(eventStream?.running);
+      return {
+        running,
+        status: running ? 'running' : 'stopped',
+        mode: config.mockDevice ? 'mock' : 'device'
+      };
+    },
+    start: startDeviceEventService,
+    stop: stopDeviceEventService
+  });
+
+  serviceManager.register({
+    id: 'eolo-users-sync',
+    name: 'Sync residentes EOLO',
+    group: 'bridge',
+    description: 'Sincroniza permisos/residentes EOLO hacia Hikvision.',
+    status: async () => ({
+      ...eoloUserSync.status(),
+      running: Boolean(eoloUserSync.timer || eoloUserSync.running),
+      status: eoloUserSync.timer || eoloUserSync.running ? 'running' : 'stopped'
+    }),
+    start: async () => {
+      if (!config.eolo.userSyncEnabled) {
+        const error = new Error('Activa la sincronizacion EOLO en Configuracion antes de iniciar.');
+        error.status = 400;
+        throw error;
+      }
+      eoloUserSync.start();
+    },
+    stop: async () => eoloUserSync.stop(),
+    restart: async () => eoloUserSync.restart()
+  });
+
+  serviceManager.register({
+    id: 'eolo-task-poller',
+    name: 'Polling tareas EOLO',
+    group: 'bridge',
+    description: 'Consulta tareas remotas pendientes para el dispositivo local.',
+    status: async () => ({
+      enabled: config.eolo.pollEnabled,
+      running: Boolean(taskRunner.pollTimer),
+      status: taskRunner.pollTimer ? 'running' : 'stopped'
+    }),
+    start: async () => {
+      if (!config.eolo.pollEnabled) {
+        const error = new Error('Activa EOLO_POLL_ENABLED antes de iniciar el polling.');
+        error.status = 400;
+        throw error;
+      }
+      taskRunner.startPolling();
+    },
+    stop: async () => taskRunner.stopPolling(),
+    restart: async () => {
+      taskRunner.stopPolling();
+      taskRunner.startPolling();
+    }
+  });
+
+  serviceManager.register({
+    id: 'anpr-api',
+    name: 'API ANPR',
+    group: 'anpr',
+    description: 'API interna Python para configuracion, visitas y control ANPR.',
+    controllable: false,
+    status: async () => {
+      try {
+        const response = await fetch(`${config.anpr.baseUrl}/api/health`, {
+          signal: AbortSignal.timeout(3000)
+        });
+        const payload = await response.json().catch(() => ({}));
+        return {
+          running: response.ok,
+          status: response.ok ? 'running' : 'error',
+          port: payload.port,
+          error: response.ok ? undefined : response.statusText
+        };
+      } catch (error) {
+        return { running: false, status: 'unreachable', error: error.message };
+      }
+    }
+  });
+
+  serviceManager.register(
+    remoteAnprService({
+      id: 'anpr-processor',
+      name: 'Procesador ANPR',
+      baseUrl: config.anpr.baseUrl,
+      description: 'Captura RTSP, detecta placas y registra movimientos locales.'
+    })
+  );
+  serviceManager.register(
+    remoteAnprService({
+      id: 'rtsp-preview',
+      name: 'Preview RTSP',
+      baseUrl: config.anpr.baseUrl,
+      description: 'Servidor interno de video para previsualizar camaras.'
+    })
+  );
+  serviceManager.register(
+    remoteAnprService({
+      id: 'visit-sync',
+      name: 'Sync visitas EOLO',
+      baseUrl: config.anpr.baseUrl,
+      description: 'Sincroniza accesos, estacionamiento y cobros locales hacia EOLO Cloud.'
+    })
+  );
+}
+
 function normalizeEmployeeSearch(result) {
   const search = result.UserInfoSearch || result.UserInfoSearchCond || result;
   const employees = search.UserInfo || search.userInfo || search.UserInfoList || [];
@@ -405,6 +547,24 @@ function stopCurrentStream() {
   if (eventStream?.running) {
     eventStream.stop();
   }
+}
+
+async function startDeviceEventService() {
+  if (config.mockDevice) {
+    device.startAutoEvents();
+    await log('info', 'Eventos mock iniciados');
+    return { running: true, mode: 'mock' };
+  }
+  return eventStream.start();
+}
+
+async function stopDeviceEventService() {
+  if (config.mockDevice) {
+    device.stopAutoEvents();
+    await log('info', 'Eventos mock detenidos');
+    return { running: false, mode: 'mock' };
+  }
+  return eventStream.stop();
 }
 
 async function validateCurrentDevice() {

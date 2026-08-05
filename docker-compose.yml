@@ -3,6 +3,9 @@ services:
     build: .
     image: eolo-access-bridge:latest
     container_name: eolo-access-bridge
+    depends_on:
+      anpr-api:
+        condition: service_healthy
     ports:
       - "${HOST_PORT:-8080}:${PORT:-8080}"
     env_file:
@@ -13,6 +16,7 @@ services:
       PORT: ${PORT:-8080}
       DATA_DIR: /app/data
       UPLOAD_DIR: /app/uploads
+      ANPR_API_BASE_URL: http://anpr-api:8090
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads
@@ -27,5 +31,43 @@ services:
       interval: 30s
       timeout: 5s
       start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+  anpr-api:
+    build:
+      context: ./AnprEolo
+    image: eolo-anpr-api:latest
+    container_name: eolo-anpr-api
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ANPR_API_PORT: 8090
+      PORT: 8090
+      ANPR_CONTROL_BASE_URL: http://127.0.0.1:8090
+      ANPR_DB_FILE: /app/data/plates.db
+      ANPR_CONFIG_FILE: /app/data/config.json
+      ANPR_STREAM_DIR: /app/stream
+      BUBBLE_BASE_URL: ${BUBBLE_BASE_URL:-}
+      BUBBLE_TOKEN: ${BUBBLE_TOKEN:-}
+    expose:
+      - "8090"
+      - "8083"
+    volumes:
+      - ./AnprEolo/plates.db:/app/data/plates.db
+      - ./AnprEolo/config.json:/app/data/config.json
+      - ./AnprEolo/static/captures:/app/static/captures
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json, urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/api/health', timeout=5).read()"
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
       retries: 3
     restart: unless-stopped

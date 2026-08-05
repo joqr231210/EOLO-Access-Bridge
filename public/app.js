@@ -3,6 +3,7 @@ const state = {
   deviceConfig: null,
   events: [],
   logs: [],
+  services: [],
   deviceCommunicationOk: false,
   lastLocalCommunicationAt: null,
   employees: [],
@@ -123,6 +124,9 @@ function setPanel(panelName) {
   $(`#${panelName}Panel`).classList.add('active');
   if (panelName === 'employees' && $('#directoryTaskPanel').classList.contains('active')) {
     loadEmployees().catch((error) => addMessage('assistant', error.message, { error: true }));
+  }
+  if (panelName === 'services') {
+    loadServices().catch((error) => addMessage('assistant', error.message, { error: true }));
   }
 }
 
@@ -303,6 +307,57 @@ function updateStreamToggle(health = state.health) {
       : 'Iniciar escucha de eventos del dispositivo'
     : 'Valida la comunicacion con el dispositivo local para escuchar eventos';
   status.textContent = running ? 'Activo' : available ? 'Inactivo' : 'Validacion requerida';
+}
+
+async function loadServices() {
+  const payload = await api('/api/services');
+  state.services = payload.services || [];
+  renderServices();
+  return payload;
+}
+
+async function controlService(serviceId, action) {
+  const payload = await api(`/api/services/${encodeURIComponent(serviceId)}/${action}`, {
+    method: 'POST'
+  });
+  state.services = payload.services || [];
+  renderServices();
+  addMessage('assistant', `Servicio ${serviceId}: ${action}.`, payload.service || payload);
+}
+
+function renderServices() {
+  const grid = $('#serviceGrid');
+  if (!grid) return;
+  if (!state.services.length) {
+    grid.innerHTML = '<div class="empty-state">Sin servicios reportados.</div>';
+    return;
+  }
+
+  grid.innerHTML = state.services
+    .map((service) => {
+      const running = Boolean(service.running);
+      const status = service.status || (running ? 'running' : 'stopped');
+      const disabled = service.controllable === false;
+      const detail = service.error || service.description || service.group || '';
+      return `
+        <article class="service-row ${running ? 'running' : 'stopped'}">
+          <div class="service-main">
+            <span class="service-dot" aria-hidden="true"></span>
+            <div>
+              <strong>${escapeHtml(service.name || service.id)}</strong>
+              <span>${escapeHtml(service.group || 'local')} · ${escapeHtml(status)}</span>
+              ${detail ? `<small>${escapeHtml(detail)}</small>` : ''}
+            </div>
+          </div>
+          <div class="service-actions">
+            <button type="button" data-service-action="start" data-service-id="${escapeHtml(service.id)}" ${disabled || running ? 'disabled' : ''}>Iniciar</button>
+            <button type="button" data-service-action="stop" data-service-id="${escapeHtml(service.id)}" ${disabled || !running ? 'disabled' : ''}>Detener</button>
+            <button type="button" data-service-action="restart" data-service-id="${escapeHtml(service.id)}" ${disabled ? 'disabled' : ''}>Reiniciar</button>
+          </div>
+        </article>
+      `;
+    })
+    .join('');
 }
 
 async function submitEmployee(form, action) {
@@ -872,6 +927,18 @@ $('#streamBtn').addEventListener('click', () => {
   toggleStream().catch((error) => addMessage('assistant', error.message));
 });
 
+$('#refreshServicesBtn').addEventListener('click', () => {
+  loadServices().catch((error) => addMessage('assistant', error.message, { error: true }));
+});
+
+$('#serviceGrid').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-service-action]');
+  if (!button) return;
+  controlService(button.dataset.serviceId, button.dataset.serviceAction).catch((error) =>
+    addMessage('assistant', error.message, { error: true })
+  );
+});
+
 $('#latestLogBar').addEventListener('click', openLatestLog);
 
 $('#latestLogBar').addEventListener('keydown', (event) => {
@@ -1018,6 +1085,7 @@ addMessage(
 );
 connectSse();
 refreshHealth().catch((error) => addMessage('assistant', error.message));
+loadServices().catch((error) => addMessage('assistant', error.message, { error: true }));
 if ($('#employeesPanel')?.classList.contains('active') && $('#directoryTaskPanel')?.classList.contains('active')) {
   loadEmployees().catch((error) => addMessage('assistant', error.message, { error: true }));
 }

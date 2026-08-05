@@ -532,6 +532,73 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.service-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.service-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 74px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+}
+
+.service-main {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.service-main strong,
+.service-main span,
+.service-main small {
+  display: block;
+}
+
+.service-main span,
+.service-main small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.service-main small {
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.service-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #c4c4bd;
+}
+
+.service-row.running .service-dot {
+  background: #16a34a;
+}
+
+.service-row.stopped .service-dot {
+  background: #8b8b8b;
+}
+
+.service-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.service-actions button {
+  min-height: 34px;
+}
+
 .modal {
   width: min(92vw, 620px);
   border: 1px solid #000000;
@@ -1177,7 +1244,7 @@ button:disabled {
   }
 
   .nav {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   }
 
   .topbar,
@@ -1197,21 +1264,24 @@ button:disabled {
   .settings-layout,
   .directory-toolbar,
   .directory-search,
-  .employee-table-head,
-  .employee-row,
-  .events-tabs,
-  .event-row,
-  .log-row {
+    .employee-table-head,
+    .employee-row,
+    .service-row,
+    .events-tabs,
+    .event-row,
+    .log-row {
     grid-template-columns: 1fr;
   }
 
   .row-actions,
+  .service-actions,
   .employee-pagination,
   .directory-toolbar {
     align-items: stretch;
   }
 
-  .row-actions {
+  .row-actions,
+  .service-actions {
     justify-content: start;
   }
 
