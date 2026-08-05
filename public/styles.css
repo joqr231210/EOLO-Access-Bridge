@@ -909,6 +909,52 @@ button:disabled {
   gap: 16px;
 }
 
+.camera-config-layout {
+  display: grid;
+  gap: 18px;
+}
+
+.anpr-config-form {
+  display: grid;
+  gap: 14px;
+}
+
+.anpr-config-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.anpr-config-grid label {
+  min-width: 0;
+}
+
+.anpr-config-grid input,
+.anpr-config-grid select {
+  width: 100%;
+  min-width: 0;
+}
+
+.anpr-config-grid .wide-field {
+  grid-column: span 2;
+}
+
+.toggle-field {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-top: 20px;
+}
+
+.toggle-field input {
+  width: auto;
+}
+
+.camera-editor-section {
+  gap: 14px;
+}
+
 .hardware-editor-block {
   display: grid;
   gap: 10px;
@@ -946,7 +992,7 @@ button:disabled {
 }
 
 .hardware-row.camera-row {
-  grid-template-columns: repeat(4, minmax(120px, 1fr)) auto;
+  grid-template-columns: minmax(150px, 1fr) minmax(260px, 2fr) minmax(120px, 0.8fr) minmax(100px, 0.7fr) auto;
 }
 
 .barrier-picker {
@@ -1674,16 +1720,23 @@ button:disabled {
   .employee-row,
   .service-row,
   .service-section-grid,
+  .anpr-config-grid,
   .hardware-row,
   .hardware-row.barrier-row,
+  .hardware-row.camera-row,
   .events-tabs,
   .event-row,
   .log-row {
     grid-template-columns: 1fr;
   }
 
+  .anpr-config-grid .wide-field,
   .hardware-row .wide-field {
     grid-column: auto;
+  }
+
+  .toggle-field {
+    padding-top: 0;
   }
 
   .service-detail-header,

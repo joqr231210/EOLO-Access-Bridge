@@ -307,6 +307,27 @@ app.get(
   })
 );
 
+app.get(
+  '/api/anpr/config',
+  asyncRoute(async (_req, res) => {
+    res.json(await fetchAnprJson('/api/config'));
+  })
+);
+
+app.put(
+  '/api/anpr/config',
+  asyncRoute(async (req, res) => {
+    res.json(
+      await fetchAnprJson('/api/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req.body),
+        timeoutMs: 10000
+      })
+    );
+  })
+);
+
 app.put(
   '/api/anpr/hardware',
   asyncRoute(async (req, res) => {

@@ -862,10 +862,16 @@ function renderAnprProcessorServiceView() {
     `,
     cameras: `
       ${state.anprHardwareError ? `<div class="service-warning">No se pudo cargar hardware editable: ${escapeHtml(state.anprHardwareError)}</div>` : ''}
-      <section class="service-section wide">
-        <h4>Cámaras ANPR</h4>
-        ${renderCameraHardwareEditor(hardware)}
-      </section>
+      <div class="camera-config-layout">
+        <section class="service-section wide">
+          <h4>Parámetros ANPR</h4>
+          ${renderAnprConfigForm(cfg)}
+        </section>
+        <section class="service-section wide camera-editor-section">
+          <h4>Cámaras ANPR</h4>
+          ${renderCameraHardwareEditor(hardware)}
+        </section>
+      </div>
     `,
     movements: `
       <section class="service-section wide">
@@ -888,6 +894,53 @@ function renderAnprProcessorServiceView() {
         .join('')}
     </div>
     ${tabContent[activeTab] || tabContent.summary}
+  `;
+}
+
+function renderAnprConfigForm(cfg = anprConfig()) {
+  return `
+    <form class="anpr-config-form" id="anprConfigForm">
+      <div class="anpr-config-grid">
+        <label class="wide-field">
+          Server ANPR
+          <input name="server_url" value="${escapeHtml(cfg.server_url || '')}" placeholder="https://..." />
+        </label>
+        <label>
+          Version Bubble
+          <select name="version">
+            <option value="test" ${cfg.version === 'test' ? 'selected' : ''}>test</option>
+            <option value="live" ${cfg.version === 'live' ? 'selected' : ''}>live</option>
+          </select>
+        </label>
+        <label>
+          ID acceso
+          <input name="id_acceso" value="${escapeHtml(cfg.id_acceso || '')}" placeholder="ID Bubble" />
+        </label>
+        <label class="wide-field">
+          Token Bubble
+          <input name="bubble_token" type="password" placeholder="${cfg.bubble_token_set ? 'Token guardado - escribir para reemplazar' : 'Token Bubble'}" />
+        </label>
+        <label>
+          Min. ancho placa
+          <input name="min_plate_width_ratio" type="number" min="0" max="1" step="0.001" value="${escapeHtml(cfg.min_plate_width_ratio ?? 0.02)}" />
+        </label>
+        <label>
+          Min. alto placa
+          <input name="min_plate_height_ratio" type="number" min="0" max="1" step="0.001" value="${escapeHtml(cfg.min_plate_height_ratio ?? 0.02)}" />
+        </label>
+        <label>
+          Confianza vehiculo
+          <input name="min_vehicle_confidence" type="number" min="0" max="1" step="0.01" value="${escapeHtml(cfg.min_vehicle_confidence ?? 0.78)}" />
+        </label>
+        <label class="toggle-field">
+          <input name="require_vehicle_detection" type="checkbox" ${cfg.require_vehicle_detection ? 'checked' : ''} />
+          <span>Requiere vehículo detectado</span>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit">Guardar parámetros</button>
+      </div>
+    </form>
   `;
 }
 
@@ -1523,6 +1576,39 @@ async function saveAnprHardware(form) {
   return result;
 }
 
+async function saveAnprConfig(form) {
+  const payload = readAnprConfigForm(form);
+  const result = await api('/api/anpr/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  addMessage('assistant', 'Parametros ANPR guardados.', {
+    ok: true,
+    server_url: result.server_url,
+    version: result.version,
+    bubble_token_set: result.bubble_token_set
+  });
+  await loadServices().catch(() => {});
+  return result;
+}
+
+function readAnprConfigForm(form) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  const payload = {
+    server_url: String(data.server_url || '').trim(),
+    version: data.version || 'test',
+    id_acceso: String(data.id_acceso || '').trim(),
+    min_plate_width_ratio: Number(data.min_plate_width_ratio || 0),
+    min_plate_height_ratio: Number(data.min_plate_height_ratio || 0),
+    min_vehicle_confidence: Number(data.min_vehicle_confidence || 0),
+    require_vehicle_detection: Boolean(data.require_vehicle_detection)
+  };
+  const token = String(data.bubble_token || '').trim();
+  if (token) payload.bubble_token = token;
+  return payload;
+}
+
 function readAnprHardwareForm(form) {
   const existing = anprHardware();
   const cameraRows = [...form.querySelectorAll('[data-camera-row]')];
@@ -1875,9 +1961,15 @@ $('#serviceDetail').addEventListener('click', (event) => {
 });
 
 $('#serviceDetail').addEventListener('submit', (event) => {
-  if (!event.target.matches('#anprHardwareForm')) return;
-  event.preventDefault();
-  saveAnprHardware(event.target).catch((error) => addMessage('assistant', error.message, { error: true }));
+  if (event.target.matches('#anprHardwareForm')) {
+    event.preventDefault();
+    saveAnprHardware(event.target).catch((error) => addMessage('assistant', error.message, { error: true }));
+    return;
+  }
+  if (event.target.matches('#anprConfigForm')) {
+    event.preventDefault();
+    saveAnprConfig(event.target).catch((error) => addMessage('assistant', error.message, { error: true }));
+  }
 });
 
 $('#latestLogBar').addEventListener('click', openLatestLog);
