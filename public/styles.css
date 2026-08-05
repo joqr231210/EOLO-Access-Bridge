@@ -203,28 +203,14 @@ button {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto 1fr;
   overflow: auto;
-}
-
-.topbar {
-  min-height: 88px;
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 18px;
-  padding: 18px 28px;
-  border-bottom: 1px solid var(--line);
-  background: #ffffff;
 }
 
 .latest-log-bar {
   min-height: 42px;
   position: sticky;
-  top: 88px;
+  top: 0;
   z-index: 9;
   display: grid;
   grid-template-columns: 92px 10px minmax(0, 1fr);
@@ -426,6 +412,12 @@ button:disabled {
 
 .event-toggle.is-on .event-toggle-copy small {
   color: #0b0b0b;
+}
+
+.service-event-toggle {
+  width: 100%;
+  min-width: 0;
+  justify-content: flex-start;
 }
 
 .danger {
@@ -1666,15 +1658,10 @@ button:disabled {
     padding-left: 8px;
   }
 
-  .topbar,
   .latest-log-bar,
   .panel {
     padding-left: 16px;
     padding-right: 16px;
-  }
-
-  .topbar {
-    position: static;
   }
 
   .panel.split.active,

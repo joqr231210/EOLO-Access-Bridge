@@ -502,6 +502,7 @@ function renderServiceDetail() {
     ${(renderers[tab.id] || renderEmptyServiceView)(service)}
   `;
   mountEmployeeWorkspace();
+  updateStreamToggle();
 }
 
 function parkEmployeeWorkspace() {
@@ -663,6 +664,7 @@ function renderFaceOperationView() {
     <div class="service-section-grid">
       <section class="service-section">
         <h4>Proceso</h4>
+        ${renderFaceEventToggle()}
         ${renderDefinitionList([
           { label: 'Destino', value: `${device.protocol || state.health?.deviceProtocol || 'http'}://${device.host || state.health?.deviceHost || '-'}:${device.port || state.health?.devicePort || '-'}` },
           { label: 'Puerta', value: device.doorNo || '-' },
@@ -683,6 +685,28 @@ function renderFaceOperationView() {
         )}
       </section>
     </div>
+  `;
+}
+
+function renderFaceEventToggle() {
+  return `
+    <button
+      class="event-toggle service-event-toggle"
+      id="streamBtn"
+      type="button"
+      role="switch"
+      aria-checked="false"
+      disabled
+      title="Valida la comunicacion con el dispositivo local para escuchar eventos"
+    >
+      <span class="event-toggle-track" aria-hidden="true">
+        <span class="event-toggle-knob"></span>
+      </span>
+      <span class="event-toggle-copy">
+        <strong>Escuchar Eventos Dispositivo</strong>
+        <small id="streamToggleStatus">Validacion requerida</small>
+      </span>
+    </button>
   `;
 }
 
@@ -1748,12 +1772,8 @@ document.querySelectorAll('[data-edit-tab]').forEach((button) => {
   button.addEventListener('click', () => setEditTab(button.dataset.editTab));
 });
 
-$('#refreshBtn').addEventListener('click', () => {
+$('#refreshBtn')?.addEventListener('click', () => {
   refreshHealth().catch((error) => addMessage('assistant', error.message));
-});
-
-$('#streamBtn').addEventListener('click', () => {
-  toggleStream().catch((error) => addMessage('assistant', error.message));
 });
 
 $('#refreshServicesBtn').addEventListener('click', () => {
@@ -1789,6 +1809,11 @@ $('#serviceDetail').addEventListener('click', (event) => {
   if (anprProcessorTab) {
     state.activeAnprProcessorTab = anprProcessorTab.dataset.anprProcessorTab;
     renderServiceDetail();
+    return;
+  }
+
+  if (event.target.closest('#streamBtn')) {
+    toggleStream().catch((error) => addMessage('assistant', error.message));
     return;
   }
 
