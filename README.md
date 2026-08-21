@@ -88,11 +88,11 @@ Windows limpio con Docker Desktop instalado:
 
 ```powershell
 cd $env:USERPROFILE\Downloads
-powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri https://gist.githubusercontent.com/joqr231210/30692d997dcf49a183da9c37e3ad2016/raw/9c2be7d568a96a8dd76fd64bba4eed286601efae/run-eolo-access-bridge-docker.ps1 -OutFile run-eolo-access-bridge-docker.ps1"
+powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri https://gist.githubusercontent.com/joqr231210/30692d997dcf49a183da9c37e3ad2016/raw/run-eolo-access-bridge-docker.ps1 -OutFile run-eolo-access-bridge-docker.ps1"
 powershell -ExecutionPolicy Bypass -File .\run-eolo-access-bridge-docker.ps1
 ```
 
-El script descarga `eoloapp/eolo-access-bridge:0.2.5-all-in-one-amd64`, reemplaza el contenedor existente y arranca Bridge, ANPR y WebRTC con puertos/volumenes persistentes.
+El script descarga `eoloapp/eolo-access-bridge:all-in-one-latest` para `linux/amd64`, reemplaza el contenedor existente y arranca Bridge, ANPR y WebRTC con puertos/volumenes persistentes. Si algo falla, deja la ventana abierta con diagnostico y sugerencias.
 
 Si Docker Hub responde `authentication required`, inicia sesion y vuelve a ejecutar el script:
 

@@ -1616,7 +1616,7 @@ Uso rapido desde PowerShell:
 
 ```powershell
 cd $env:USERPROFILE\Downloads
-powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri https://gist.githubusercontent.com/joqr231210/30692d997dcf49a183da9c37e3ad2016/raw/9c2be7d568a96a8dd76fd64bba4eed286601efae/run-eolo-access-bridge-docker.ps1 -OutFile run-eolo-access-bridge-docker.ps1"
+powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri https://gist.githubusercontent.com/joqr231210/30692d997dcf49a183da9c37e3ad2016/raw/run-eolo-access-bridge-docker.ps1 -OutFile run-eolo-access-bridge-docker.ps1"
 powershell -ExecutionPolicy Bypass -File .\run-eolo-access-bridge-docker.ps1
 ```
 
@@ -1698,3 +1698,14 @@ Script Windows actualizado para descargar:
 ```text
 eoloapp/eolo-access-bridge:0.2.5-all-in-one-amd64
 ```
+
+### Script Windows seguro
+
+Se robustecio `scripts/run-eolo-access-bridge-docker.ps1` y el gist descargable:
+
+- por default hace pull de `eoloapp/eolo-access-bridge:all-in-one-latest` con `--platform linux/amd64`;
+- valida Docker Desktop, puertos locales, volumenes y health del contenedor;
+- reemplaza el contenedor existente de forma controlada;
+- muestra ultimos logs si el contenedor no queda `healthy`;
+- mantiene la ventana abierta siempre, con diagnostico si ocurre un error;
+- la URL raw del gist quedo sin revision fija para descargar siempre el script vigente.
