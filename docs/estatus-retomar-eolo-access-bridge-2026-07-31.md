@@ -1709,3 +1709,29 @@ Se robustecio `scripts/run-eolo-access-bridge-docker.ps1` y el gist descargable:
 - muestra ultimos logs si el contenedor no queda `healthy`;
 - mantiene la ventana abierta siempre, con diagnostico si ocurre un error;
 - la URL raw del gist quedo sin revision fija para descargar siempre el script vigente.
+
+## Actualizacion 2026-08-21 - Electron Windows v0.2.6
+
+Version local visible en login: `v0.2.6`.
+
+Correcciones para instalador Windows:
+
+- El cliente Electron ahora deja visible el menu de aplicacion, con accesos `Operador` y `Ajustes` (`Ctrl+1` / `Ctrl+2`).
+- El panel de Operador incluye un boton `Panel tecnico` en el sidebar y en el menu de perfil para navegar internamente a `/settings`.
+- El panel tecnico `/settings` incluye boton `Operador` para regresar a `/`.
+- El sidecar ANPR se lanza con `windowsHide: true`.
+- go2rtc/WebRTC se lanza oculto, con stdout/stderr hacia `go2rtc.log` en la carpeta de datos local.
+- Se agrego watchdog ligero para reiniciar go2rtc si el proceso cae o si la API deja de responder mientras el visualizador debe permanecer activo.
+
+Build Windows recomendado:
+
+```powershell
+npm install
+npm run desktop:win:full
+```
+
+Salida esperada:
+
+```text
+release\EOLO Access Bridge Setup 0.2.6.exe
+```

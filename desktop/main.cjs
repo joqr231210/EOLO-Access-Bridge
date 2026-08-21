@@ -166,7 +166,8 @@ function startAnprSidecar(context) {
   anprProcess = spawn(command, args, {
     cwd,
     env,
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true
   });
   anprProcess.stdout.on('data', (chunk) => appendLog(logFile, chunk));
   anprProcess.stderr.on('data', (chunk) => appendLog(logFile, chunk));
@@ -278,7 +279,7 @@ function createWindow() {
     minWidth: 1160,
     minHeight: 760,
     title: 'EOLO Access Bridge',
-    autoHideMenuBar: process.platform !== 'darwin',
+    autoHideMenuBar: false,
     show: false,
     backgroundColor: '#f4f7fb',
     webPreferences: {

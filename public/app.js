@@ -1883,7 +1883,12 @@ function connectSse() {
 }
 
 document.querySelectorAll('.nav-item').forEach((button) => {
+  if (button.dataset.openOperator !== undefined) return;
   button.addEventListener('click', () => setPanel(button.dataset.panel));
+});
+
+document.querySelectorAll('[data-open-operator]').forEach((button) => {
+  button.addEventListener('click', () => window.location.assign('/'));
 });
 
 $('#serviceSidebarMenu')?.addEventListener('click', (event) => {

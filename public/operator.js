@@ -3127,6 +3127,12 @@ function bindEvents() {
       showSettings();
     });
   });
+  $$('[data-open-technical-settings]').forEach((button) => {
+    button.addEventListener('click', () => {
+      $$('[data-profile-menu]').forEach((menu) => menu.classList.remove('open'));
+      window.location.assign('/settings');
+    });
+  });
   $('#syncState').addEventListener('click', syncNow);
   document.addEventListener('click', (event) => {
     if (event.target.closest('[data-profile-menu]')) return;

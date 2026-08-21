@@ -44,6 +44,10 @@ let taskRunner = new TaskRunner(device, eoloClient);
 let eoloUserSync = new EoloUserSync(device, eoloClient);
 const serviceManager = new ServiceManager();
 let operatorId2CounterQueue = Promise.resolve();
+let go2rtcDesiredRunning = false;
+let go2rtcWatchdogTimer = null;
+let go2rtcRestarting = false;
+let shutdownRequested = false;
 registerServices();
 
 app.use(cors());
@@ -200,7 +204,54 @@ async function isGo2rtcReachable() {
   }
 }
 
+function go2rtcLogPath() {
+  return path.join(config.dataDir, 'go2rtc.log');
+}
+
+function pipeProcessToFile(child, filePath, label) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const stream = fs.createWriteStream(filePath, { flags: 'a' });
+  stream.write(`[${new Date().toISOString()}] ${label} iniciado\n`);
+  child.stdout?.on('data', (chunk) => stream.write(chunk));
+  child.stderr?.on('data', (chunk) => stream.write(chunk));
+  child.once('close', (code, signal) => {
+    stream.write(`[${new Date().toISOString()}] ${label} finalizo code=${code} signal=${signal}\n`);
+    stream.end();
+  });
+}
+
+function scheduleGo2rtcWatchdog() {
+  clearGo2rtcWatchdog();
+  go2rtcWatchdogTimer = setInterval(async () => {
+    if (!go2rtcDesiredRunning || go2rtcRestarting) return;
+    const running = go2rtcStatus().running;
+    const reachable = running ? await isGo2rtcReachable() : false;
+    if (running && reachable) return;
+    go2rtcRestarting = true;
+    try {
+      await log('warn', 'Visualizador WebRTC no responde; reiniciando go2rtc', {
+        running,
+        reachable
+      });
+      await startGo2rtcPreview({ preserveDesired: true });
+    } catch (error) {
+      await log('error', 'No se pudo reiniciar go2rtc automaticamente', {
+        error: error.message
+      });
+    } finally {
+      go2rtcRestarting = false;
+    }
+  }, 15000);
+  go2rtcWatchdogTimer.unref?.();
+}
+
+function clearGo2rtcWatchdog() {
+  if (go2rtcWatchdogTimer) clearInterval(go2rtcWatchdogTimer);
+  go2rtcWatchdogTimer = null;
+}
+
 async function startGo2rtcPreview() {
+  go2rtcDesiredRunning = true;
   if (!config.anpr.webrtcEnabled) {
     const error = new Error('El visualizador WebRTC esta deshabilitado.');
     error.status = 400;
@@ -209,13 +260,16 @@ async function startGo2rtcPreview() {
   const cameras = await loadAnprRtspCameras();
   await writeGo2rtcConfig(cameras);
   if (go2rtcStatus().running && (await isGo2rtcReachable())) {
+    scheduleGo2rtcWatchdog();
     return { ...go2rtcStatus(), cameras: cameras.length };
   }
-  await stopGo2rtcPreview();
+  await stopGo2rtcPreview({ preserveDesired: true });
   let spawnError = null;
   go2rtcProcess = spawn(config.anpr.go2rtcBinary, ['-config', config.anpr.go2rtcConfigFile], {
-    stdio: ['ignore', 'inherit', 'inherit']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true
   });
+  pipeProcessToFile(go2rtcProcess, go2rtcLogPath(), 'go2rtc');
   go2rtcProcess.on('error', (error) => {
     spawnError = error;
     log('error', 'No se pudo iniciar go2rtc', {
@@ -227,6 +281,17 @@ async function startGo2rtcPreview() {
   go2rtcProcess.on('exit', (code, signal) => {
     log('warn', 'Visualizador WebRTC detenido', { code, signal }).catch(() => {});
     go2rtcProcess = null;
+    if (go2rtcDesiredRunning && !shutdownRequested) {
+      setTimeout(() => {
+        if (go2rtcDesiredRunning && !go2rtcRestarting) {
+          startGo2rtcPreview({ preserveDesired: true }).catch((error) => {
+            log('error', 'No se pudo reiniciar go2rtc tras salida inesperada', {
+              error: error.message
+            }).catch(() => {});
+          });
+        }
+      }, 2000).unref?.();
+    }
   });
   await new Promise((resolve) => setTimeout(resolve, 700));
   if (spawnError) throw spawnError;
@@ -240,10 +305,13 @@ async function startGo2rtcPreview() {
     cameras: cameras.length,
     publicUrl: config.anpr.webrtcPublicUrl
   });
+  scheduleGo2rtcWatchdog();
   return { ...go2rtcStatus(), cameras: cameras.length };
 }
 
-async function stopGo2rtcPreview() {
+async function stopGo2rtcPreview(options = {}) {
+  if (!options.preserveDesired) go2rtcDesiredRunning = false;
+  if (!options.preserveDesired) clearGo2rtcWatchdog();
   if (go2rtcProcess && go2rtcProcess.exitCode === null && !go2rtcProcess.killed) {
     go2rtcProcess.kill('SIGTERM');
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -1575,6 +1643,7 @@ const server = app.listen(config.port, () => {
 });
 
 const shutdown = () => {
+  shutdownRequested = true;
   taskRunner.stopPolling();
   eoloUserSync.stop();
   stopGo2rtcPreview().catch(() => {});
