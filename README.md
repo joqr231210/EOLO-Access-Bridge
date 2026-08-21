@@ -60,13 +60,13 @@ npm run desktop:win:full
 El instalador Windows queda en:
 
 ```text
-release\EOLO Access Bridge Setup 0.2.4.exe
+release\EOLO Access Bridge Setup 0.2.5.exe
 ```
 
 El instalador macOS queda en:
 
 ```text
-release/EOLO Access Bridge-0.2.4-arm64.dmg
+release/EOLO Access Bridge-0.2.5-arm64.dmg
 ```
 
 Notas:
@@ -92,7 +92,7 @@ powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri https://gist
 powershell -ExecutionPolicy Bypass -File .\run-eolo-access-bridge-docker.ps1
 ```
 
-El script descarga `eoloapp/eolo-access-bridge:0.2.4-all-in-one-amd64`, reemplaza el contenedor existente y arranca Bridge, ANPR y WebRTC con puertos/volumenes persistentes.
+El script descarga `eoloapp/eolo-access-bridge:0.2.5-all-in-one-amd64`, reemplaza el contenedor existente y arranca Bridge, ANPR y WebRTC con puertos/volumenes persistentes.
 
 Si Docker Hub responde `authentication required`, inicia sesion y vuelve a ejecutar el script:
 

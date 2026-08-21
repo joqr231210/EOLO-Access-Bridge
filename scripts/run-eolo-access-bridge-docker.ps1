@@ -1,5 +1,5 @@
 param(
-  [string]$Image = "eoloapp/eolo-access-bridge:0.2.4-all-in-one-amd64",
+  [string]$Image = "eoloapp/eolo-access-bridge:0.2.5-all-in-one-amd64",
   [string]$ContainerName = "eolo-access-bridge",
   [int]$BridgePort = 8080,
   [int]$PreviewPort = 8083,

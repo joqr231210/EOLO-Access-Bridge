@@ -1672,3 +1672,29 @@ git diff --check
 Validacion posterior al fix en Bubble:
 
 - Movimiento `1787318401699x481307497632044600` creado en `bridge-dev` ya aparece con `id2_text = AC34CI00005`.
+
+## Actualizacion 2026-08-21 - Docker Hub v0.2.5
+
+Version local visible en login: `v0.2.5`.
+
+Contenido del corte:
+
+- Ajustes visuales finales del bloque de camaras en Operador.
+- Se conserva el reproductor nativo de go2rtc para WebRTC, evitando el player custom que podia dejar `Visualizador Desconectado`.
+- Overlay de nombre y tipo de camara dentro del frame de video.
+- Controles globales de camaras mas discretos: icono de ajustes, hover solo por color y layout compacto sin halos grandes.
+- Espaciado alineado entre indicadores, buscador y filtros en el layout dividido de una sola camara.
+
+Tags Docker Hub a publicar:
+
+```bash
+eoloapp/eolo-access-bridge:0.2.5-all-in-one
+eoloapp/eolo-access-bridge:0.2.5-all-in-one-amd64
+eoloapp/eolo-access-bridge:all-in-one-latest
+```
+
+Script Windows actualizado para descargar:
+
+```text
+eoloapp/eolo-access-bridge:0.2.5-all-in-one-amd64
+```
