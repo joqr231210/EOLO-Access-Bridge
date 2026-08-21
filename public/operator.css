@@ -1643,9 +1643,37 @@ input.locked-field {
   display: none;
 }
 
+.camera-inventory-layout {
+  display: block;
+}
+
 .inventory-grid {
   grid-template-columns: repeat(2, minmax(220px, 1fr));
   margin-top: 18px;
+}
+
+.camera-inventory-layout.single-camera-split {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(260px, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.camera-inventory-layout.single-camera-split .stream-camera-panel,
+.camera-inventory-layout.single-camera-split .inventory-grid {
+  margin-top: 18px;
+}
+
+.camera-inventory-layout.single-camera-split .stream-camera-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.camera-inventory-layout.single-camera-split .stream-camera-card {
+  min-width: 0;
+}
+
+.camera-inventory-layout.single-camera-split .inventory-grid {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .stream-camera-panel {
@@ -1677,6 +1705,10 @@ input.locked-field {
 .stream-camera-empty span {
   color: var(--muted);
   font-size: 12px;
+}
+
+#streamCameraSummary:empty {
+  display: none;
 }
 
 .stream-header-actions {
@@ -1749,7 +1781,9 @@ input.locked-field {
 }
 
 .stream-camera-tools.global .stream-tools-toggle:hover,
-.stream-camera-tools.global .stream-tools-toggle:focus-visible {
+.stream-camera-tools.global .stream-tools-toggle:focus-visible,
+.stream-layout-toggle:hover,
+.stream-layout-toggle:focus-visible {
   background: rgba(7, 71, 255, 0.08);
 }
 
@@ -1760,6 +1794,22 @@ input.locked-field {
 
 .stream-tools-toggle.active .eye-off {
   display: block;
+}
+
+.stream-layout-toggle {
+  width: 24px;
+  min-height: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #667085;
+}
+
+.stream-layout-toggle.active {
+  background: rgba(7, 71, 255, 0.1);
+  color: var(--blue);
 }
 
 .ionic-toggle-control,
@@ -3377,6 +3427,7 @@ tbody tr:hover {
   .movement-toolbar,
   .filters-grid,
   .access-context,
+  .camera-inventory-layout.single-camera-split,
   .inventory-grid,
   .movement-modal-body,
   .settings-grid,

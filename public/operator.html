@@ -114,6 +114,12 @@
         <path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a17.7 17.7 0 0 1-2.1 3.1" />
         <path d="M6.6 6.6C3.6 8.6 2 12 2 12s3.5 7 10 7a10.6 10.6 0 0 0 4.1-.8" />
       </symbol>
+      <symbol id="icon-panel-split" viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <path d="M12 4v16" />
+        <path d="M15 9h3" />
+        <path d="M15 15h3" />
+      </symbol>
     </svg>
     <div class="app-loader" id="appLoader" aria-label="Cargando" aria-live="polite">
       <span></span>
@@ -221,7 +227,6 @@
                   <strong class="profile-name">Operador EOLO</strong>
                   <span class="profile-phone"></span>
                   <button class="ghost" type="button" data-menu-settings>Ajustes</button>
-                  <button class="ghost" type="button" data-menu-sync>Sincronizar</button>
                   <button class="ghost" type="button" data-logout>Cerrar sesión</button>
                 </div>
               </div>
@@ -251,7 +256,6 @@
                   <strong class="profile-name">Operador EOLO</strong>
                   <span class="profile-phone"></span>
                   <button class="ghost" type="button" data-menu-settings>Ajustes</button>
-                  <button class="ghost" type="button" data-menu-sync>Sincronizar</button>
                   <button class="ghost" type="button" data-logout>Cerrar sesión</button>
                 </div>
               </div>
@@ -286,7 +290,6 @@
                 <strong class="profile-name">Operador EOLO</strong>
                 <span class="profile-phone"></span>
                 <button class="ghost" type="button" data-menu-settings>Ajustes</button>
-                <button class="ghost" type="button" data-menu-sync>Sincronizar</button>
                 <button class="ghost" type="button" data-logout>Cerrar sesión</button>
               </div>
             </div>
@@ -308,60 +311,65 @@
           <button class="primary" type="button" id="newMovementBtn"><svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg>Nuevo Registro</button>
         </section>
 
-        <section class="stream-camera-panel" id="streamCameraPanel">
-          <header>
-            <div>
-              <h2>Cámaras RTSP</h2>
-              <span id="streamCameraSummary">Consultando cámaras...</span>
-            </div>
-            <div class="stream-header-actions">
-              <div class="stream-camera-tools global">
-                <button class="icon-button stream-tools-toggle" type="button" aria-label="Ocultar controles y logs ANPR" aria-expanded="true" title="Mostrar u ocultar controles">
-                  <svg class="ui-icon eye-on" aria-hidden="true"><use href="#icon-eye"></use></svg>
-                  <svg class="ui-icon eye-off" aria-hidden="true"><use href="#icon-eye-off"></use></svg>
-                </button>
-                <div class="stream-camera-inline-controls">
-                  <label class="ionic-toggle-control compact">
-                    <input class="stream-preview-toggle" type="checkbox" />
-                    <span class="ionic-toggle-track" aria-hidden="true"><span></span></span>
-                    <span>Visualizador</span>
-                  </label>
-                  <label class="ionic-toggle-control compact">
-                    <input class="anpr-log-toggle" type="checkbox" />
-                    <span class="ionic-toggle-track" aria-hidden="true"><span></span></span>
-                    <span>Logs</span>
-                  </label>
-                  <label class="stream-height-control compact">
-                    <span>Alto</span>
-                    <input class="stream-frame-height-range" type="range" min="180" max="560" step="20" />
-                    <b class="stream-frame-height-value">260px</b>
-                  </label>
-                </div>
+        <section class="camera-inventory-layout" id="cameraInventoryLayout">
+          <section class="stream-camera-panel" id="streamCameraPanel">
+            <header>
+              <div>
+                <h2>Cámaras</h2>
+                <span id="streamCameraSummary">Consultando cámaras...</span>
               </div>
-              <button class="icon-button stream-collapse-button" type="button" id="streamCameraCollapseBtn" aria-label="Ocultar visualizador de cámaras" aria-expanded="true">
-                <svg class="ui-icon chevron-down" aria-hidden="true"><use href="#icon-chevron-down"></use></svg>
-                <svg class="ui-icon chevron-right" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-              </button>
-            </div>
-          </header>
-          <div class="stream-camera-grid" id="streamCameraGrid"></div>
-        </section>
+              <div class="stream-header-actions">
+                <div class="stream-camera-tools global">
+                  <button class="icon-button stream-tools-toggle" type="button" aria-label="Ocultar controles y logs ANPR" aria-expanded="true" title="Mostrar u ocultar controles">
+                    <svg class="ui-icon eye-on" aria-hidden="true"><use href="#icon-eye"></use></svg>
+                    <svg class="ui-icon eye-off" aria-hidden="true"><use href="#icon-eye-off"></use></svg>
+                  </button>
+                  <div class="stream-camera-inline-controls">
+                    <label class="ionic-toggle-control compact">
+                      <input class="stream-preview-toggle" type="checkbox" />
+                      <span class="ionic-toggle-track" aria-hidden="true"><span></span></span>
+                      <span>Visualizador</span>
+                    </label>
+                    <label class="ionic-toggle-control compact">
+                      <input class="anpr-log-toggle" type="checkbox" />
+                      <span class="ionic-toggle-track" aria-hidden="true"><span></span></span>
+                      <span>Logs</span>
+                    </label>
+                    <button class="icon-button stream-layout-toggle hidden" type="button" aria-label="Alternar layout de cámara e inventario" title="Alternar layout de cámara e inventario">
+                      <svg class="ui-icon" aria-hidden="true"><use href="#icon-panel-split"></use></svg>
+                    </button>
+                    <label class="stream-height-control compact">
+                      <span>Alto</span>
+                      <input class="stream-frame-height-range" type="range" min="180" max="560" step="20" />
+                      <b class="stream-frame-height-value">260px</b>
+                    </label>
+                  </div>
+                </div>
+                <button class="icon-button stream-collapse-button" type="button" id="streamCameraCollapseBtn" aria-label="Ocultar visualizador de cámaras" aria-expanded="true">
+                  <svg class="ui-icon chevron-down" aria-hidden="true"><use href="#icon-chevron-down"></use></svg>
+                  <svg class="ui-icon chevron-right" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+                </button>
+              </div>
+            </header>
+            <div class="stream-camera-grid" id="streamCameraGrid"></div>
+          </section>
 
-        <section class="inventory-grid">
-          <article class="inventory-card">
-            <span class="inventory-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-car"></use></svg></span>
-            <div>
-              <span>Inventario <b id="vehicleVisitsBadge">0 Visitas</b></span>
-              <strong id="vehicleInventory">0</strong>
-            </div>
-          </article>
-          <article class="inventory-card">
-            <span class="inventory-icon pedestrian"><svg class="ui-icon" aria-hidden="true"><use href="#icon-person"></use></svg></span>
-            <div>
-              <span>Inventario <b id="pedestrianVisitsBadge">0 Visitas</b></span>
-              <strong id="pedestrianInventory">0</strong>
-            </div>
-          </article>
+          <section class="inventory-grid">
+            <article class="inventory-card">
+              <span class="inventory-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-car"></use></svg></span>
+              <div>
+                <span>Inventario <b id="vehicleVisitsBadge">0 Visitas</b></span>
+                <strong id="vehicleInventory">0</strong>
+              </div>
+            </article>
+            <article class="inventory-card">
+              <span class="inventory-icon pedestrian"><svg class="ui-icon" aria-hidden="true"><use href="#icon-person"></use></svg></span>
+              <div>
+                <span>Inventario <b id="pedestrianVisitsBadge">0 Visitas</b></span>
+                <strong id="pedestrianInventory">0</strong>
+              </div>
+            </article>
+          </section>
         </section>
 
         <section class="pending-sync-panel hidden" id="pendingSyncPanel">
@@ -441,7 +449,6 @@
                   <strong class="profile-name">Operador EOLO</strong>
                   <span class="profile-phone"></span>
                   <button class="ghost" type="button" data-menu-settings>Ajustes</button>
-                  <button class="ghost" type="button" data-menu-sync>Sincronizar</button>
                   <button class="ghost" type="button" data-logout>Cerrar sesión</button>
                 </div>
               </div>

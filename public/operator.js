@@ -28,6 +28,8 @@ const state = {
   streamFrameHeight: Number(localStorage.getItem('eolo.operator.streamFrameHeight') || 260),
   showAnprLogs: localStorage.getItem('eolo.operator.showAnprLogs') !== 'false',
   showStreamTools: localStorage.getItem('eolo.operator.showStreamTools') !== 'false',
+  streamInventorySplit: localStorage.getItem('eolo.operator.streamInventorySplit') === 'true',
+  visibleStreamCameraCount: 0,
   streamCameraCollapsed: localStorage.getItem('eolo.operator.streamCameraCollapsed') === 'true',
   anprDetectionTimer: null,
   anprDetectionIntervalMs: 1000,
@@ -848,11 +850,13 @@ async function loadStreamCameras() {
   } catch (error) {
     state.streamCameras = [];
     state.streamCameraStatus = { running: false, status: 'error' };
+    state.visibleStreamCameraCount = 0;
+    syncStreamPreferences();
     summary.textContent = `No se pudo consultar el visualizador: ${error.message}`;
     grid.innerHTML = `
       <article class="stream-camera-empty">
         <strong>Sin vista disponible</strong>
-        <span>Revisa que el servicio ANPR esté activo y que haya cámaras RTSP configuradas.</span>
+        <span>Revisa que el servicio ANPR esté activo y que haya cámaras configuradas.</span>
       </article>
     `;
   }
@@ -882,15 +886,16 @@ function renderStreamCameras() {
     : allCameras;
   const cameras = matchingCameras.length ? matchingCameras : allCameras;
   const running = Boolean(state.streamCameraStatus?.running);
+  state.visibleStreamCameraCount = cameras.length;
   syncStreamPreferences();
   summary.textContent = cameras.length
-    ? `${cameras.length} cámara${cameras.length === 1 ? '' : 's'} RTSP ${running ? `en línea ${state.streamCameraStatus?.mode === 'webrtc' ? 'WebRTC' : 'MSE'}` : 'listas para activar'}.`
-    : 'No hay cámaras RTSP configuradas para este punto.';
+    ? ''
+    : 'No hay cámaras configuradas para este punto.';
   grid.innerHTML = cameras.length
     ? cameras.map((camera) => renderStreamCameraCard(camera, running)).join('')
     : `
       <article class="stream-camera-empty">
-        <strong>Sin cámaras RTSP</strong>
+        <strong>Sin cámaras</strong>
         <span>Agrega cámaras en Ajustes o selecciona un punto de control con cámaras vinculadas.</span>
       </article>
     `;
@@ -899,13 +904,16 @@ function renderStreamCameras() {
 
 function syncStreamPreferences() {
   const panel = $('#streamCameraPanel');
+  const layout = $('#cameraInventoryLayout');
   const collapseButton = $('#streamCameraCollapseBtn');
+  const singleCamera = state.visibleStreamCameraCount === 1;
   const height = Math.min(560, Math.max(180, Number(state.streamFrameHeight) || 260));
   state.streamFrameHeight = height;
   panel?.style.setProperty('--stream-frame-height', `${height}px`);
   panel?.classList.toggle('hide-anpr-logs', !state.showAnprLogs);
   panel?.classList.toggle('hide-stream-tools', !state.showStreamTools);
   panel?.classList.toggle('stream-collapsed', state.streamCameraCollapsed);
+  layout?.classList.toggle('single-camera-split', Boolean(singleCamera && state.streamInventorySplit && !state.streamCameraCollapsed));
   $$('.stream-frame-height-range').forEach((input) => {
     input.value = String(height);
   });
@@ -926,6 +934,15 @@ function syncStreamPreferences() {
       state.showStreamTools ? 'Ocultar controles y logs ANPR' : 'Mostrar controles y logs ANPR'
     );
     button.classList.toggle('active', state.showStreamTools);
+  });
+  $$('.stream-layout-toggle').forEach((button) => {
+    button.classList.toggle('hidden', !singleCamera);
+    button.classList.toggle('active', Boolean(singleCamera && state.streamInventorySplit));
+    button.setAttribute('aria-pressed', String(Boolean(singleCamera && state.streamInventorySplit)));
+    button.setAttribute(
+      'aria-label',
+      state.streamInventorySplit ? 'Mostrar cámara e inventario en filas' : 'Mostrar cámara e inventario en columnas'
+    );
   });
   if (collapseButton) {
     collapseButton.setAttribute('aria-expanded', String(!state.streamCameraCollapsed));
@@ -1004,6 +1021,13 @@ function toggleStreamCameraPanel() {
 function toggleStreamTools() {
   state.showStreamTools = !state.showStreamTools;
   localStorage.setItem('eolo.operator.showStreamTools', String(state.showStreamTools));
+  syncStreamPreferences();
+}
+
+function toggleStreamInventoryLayout() {
+  if (state.visibleStreamCameraCount !== 1) return;
+  state.streamInventorySplit = !state.streamInventorySplit;
+  localStorage.setItem('eolo.operator.streamInventorySplit', String(state.streamInventorySplit));
   syncStreamPreferences();
 }
 
@@ -3103,12 +3127,6 @@ function bindEvents() {
       showSettings();
     });
   });
-  $$('[data-menu-sync]').forEach((button) => {
-    button.addEventListener('click', () => {
-      $$('[data-profile-menu]').forEach((menu) => menu.classList.remove('open'));
-      syncNow();
-    });
-  });
   $('#syncState').addEventListener('click', syncNow);
   document.addEventListener('click', (event) => {
     if (event.target.closest('[data-profile-menu]')) return;
@@ -3212,6 +3230,11 @@ function bindEvents() {
     const toolsButton = event.target.closest('.stream-tools-toggle');
     if (toolsButton) {
       toggleStreamTools();
+      return;
+    }
+    const layoutButton = event.target.closest('.stream-layout-toggle');
+    if (layoutButton) {
+      toggleStreamInventoryLayout();
       return;
     }
     const plateButton = event.target.closest('[data-anpr-plate]');
