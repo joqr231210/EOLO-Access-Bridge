@@ -1649,7 +1649,7 @@ input.locked-field {
 
 .camera-side-column {
   display: grid;
-  gap: 18px;
+  gap: 14px;
   margin-top: 18px;
 }
 
@@ -1688,11 +1688,16 @@ input.locked-field {
 }
 
 .camera-inventory-layout.single-camera-split .camera-side-column {
-  gap: 18px;
+  gap: 14px;
 }
 
 .camera-inventory-layout.single-camera-split .filters-grid {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.camera-inventory-layout.single-camera-split .camera-side-column .inventory-grid,
+.camera-inventory-layout.single-camera-split .camera-side-column .filters-grid {
+  gap: 14px;
 }
 
 .stream-camera-panel {
@@ -1786,46 +1791,41 @@ input.locked-field {
   color: var(--blue);
 }
 
-.stream-camera-tools.global .stream-tools-toggle {
+.stream-camera-tools.global .stream-tools-toggle,
+.stream-camera-tools.global .stream-layout-toggle {
   width: 24px;
   min-height: 24px;
   height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 50%;
+  border-radius: 0;
   background: transparent;
   font-size: 0;
+  box-shadow: none;
 }
 
 .stream-camera-tools.global .stream-tools-toggle:hover,
 .stream-camera-tools.global .stream-tools-toggle:focus-visible,
 .stream-layout-toggle:hover,
 .stream-layout-toggle:focus-visible {
-  background: rgba(7, 71, 255, 0.08);
+  background: transparent;
+  color: var(--blue);
+  box-shadow: none;
 }
 
-.stream-tools-toggle .eye-off,
-.stream-tools-toggle.active .eye-on {
-  display: none;
-}
-
-.stream-tools-toggle.active .eye-off {
-  display: block;
-}
-
-.stream-layout-toggle {
+.stream-camera-tools.global .stream-layout-toggle {
   width: 24px;
   min-height: 24px;
   height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 50%;
+  border-radius: 0;
   background: transparent;
   color: #667085;
 }
 
-.stream-layout-toggle.active {
-  background: rgba(7, 71, 255, 0.1);
+.stream-camera-tools.global .stream-layout-toggle.active {
+  background: transparent;
   color: var(--blue);
 }
 
