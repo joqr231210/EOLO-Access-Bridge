@@ -6,3 +6,7 @@ uploads
 backups
 .git
 .DS_Store
+AnprEolo/plates.db
+AnprEolo/config.json
+AnprEolo/static/captures
+AnprEolo/__pycache__

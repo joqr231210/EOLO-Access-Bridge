@@ -1,0 +1,177 @@
+{% extends "layout.html" %}
+
+{% block page_title %}Configuración Global{% endblock %}
+{% block page_subtitle %}Servidor central y estado del sistema{% endblock %}
+
+{% block content %}
+<div class="card" style="margin-bottom: 2rem;">
+  <div class="card-header" style="border-bottom: 1px solid var(--border-light); margin-bottom: 2rem; padding-bottom: 1rem;">
+    <h2><i class="ph ph-sliders"></i> Configuración y Control del Sistema</h2>
+  </div>
+
+  <form method="POST" action="/">
+    <!-- 1. Conexión a Bubble -->
+    <div style="margin-bottom: 2.5rem;">
+      <h3 style="margin-bottom: 1.2rem; font-size: 1.15rem; font-weight: 600; color: var(--primary);"><i class="ph ph-cloud" style="vertical-align: middle;"></i> Conexión a Bubble</h3>
+      <div style="display: flex; gap: 2.5rem; flex-wrap: wrap;">
+        <!-- Col 1 -->
+        <div style="flex: 1; min-width: 320px;">
+          <div class="form-group">
+            <label>URL del Servidor Webhook</label>
+            <input type="text" name="server_url" value="{{ server_url }}" placeholder="https://ejemplo.com/webhook">
+          </div>
+        </div>
+        <!-- Col 2 -->
+        <div style="flex: 1; min-width: 320px;">
+          <div class="form-group">
+            <label>Versión Bubble</label>
+            <div style="display: flex; gap: 1rem; margin-top: 0.4rem;">
+              <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-weight: 500;">
+                <input type="radio" name="version" value="test" {% if bubble_version == 'test' %}checked{% endif %}
+                       style="accent-color: var(--warning, #f59e0b); width: 16px; height: 16px;">
+                <span style="color: var(--warning, #f59e0b);">&#9654; version-test</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-weight: 500;">
+                <input type="radio" name="version" value="live" {% if bubble_version == 'live' %}checked{% endif %}
+                       style="accent-color: var(--success, #10b981); width: 16px; height: 16px;">
+                <span style="color: var(--success, #10b981);">&#9654; version-live</span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Bubble Token (API Key)</label>
+            <input type="password" name="bubble_token"
+                   value="{{ bubble_token }}"
+                   placeholder="Pegar token de Bubble aqui"
+                   autocomplete="off">
+            <small style="color: var(--text-muted); font-size: 0.78rem;">Se almacena en config.json. Deja en blanco para usar el token por defecto.</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr style="border: 0; border-top: 1px dashed rgba(120,120,120,0.2); margin: 2rem 0;">
+
+    <!-- 2. Filtros de Detección ANPR -->
+    <div style="margin-bottom: 2.5rem;">
+      <h3 style="margin-bottom: 1.2rem; font-size: 1.15rem; font-weight: 600; color: var(--primary);"><i class="ph ph-bounding-box" style="vertical-align: middle;"></i> Filtros de Detección ANPR</h3>
+      <div style="display: flex; gap: 2.5rem; flex-wrap: wrap;">
+        <!-- Col 1 -->
+        <div style="flex: 1; min-width: 320px;">
+          <div class="form-group">
+            <label>Ratio de Ancho Mínimo de Placa (vs Frame)</label>
+            <input type="text" name="min_plate_width_ratio" value="{{ min_plate_width_ratio }}" placeholder="0.02">
+            <small style="color: var(--text-muted); font-size: 0.78rem;">Descarta placas lejanas/pequeñas. Ej: 0.02 equivale al 2% del ancho total del frame.</small>
+          </div>
+          <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 1.5rem; margin-bottom: 0.5rem;">
+            <input type="checkbox" name="require_vehicle_detection" id="require_vehicle_detection" {% if require_vehicle_detection %}checked{% endif %} style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--secondary);">
+            <label for="require_vehicle_detection" style="cursor: pointer; margin-bottom: 0; font-weight: 500;">Requerir vehículo para enviar a Webhook</label>
+          </div>
+          <small style="color: var(--text-muted); font-size: 0.78rem; display: block; margin-bottom: 1rem;">Si se activa, la placa no se enviará si el tipo de vehículo resulta "Desconocido".</small>
+          <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 1.5rem; margin-bottom: 0.5rem;">
+            <input type="checkbox" name="strict_plate_validation" id="strict_plate_validation" {% if strict_plate_validation %}checked{% endif %} style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--secondary);">
+            <label for="strict_plate_validation" style="cursor: pointer; margin-bottom: 0; font-weight: 500;">Validación estricta de formato de placa</label>
+          </div>
+          <small style="color: var(--text-muted); font-size: 0.78rem; display: block; margin-bottom: 1rem;">Si se desactiva, acepta lecturas alfanuméricas de 4 a 12 caracteres aunque no tengan mínimo 2 letras y 3 números.</small>
+        </div>
+        <!-- Col 2 -->
+        <div style="flex: 1; min-width: 320px;">
+          <div class="form-group">
+            <label>Ratio de Alto Mínimo de Placa (vs Frame)</label>
+            <input type="text" name="min_plate_height_ratio" value="{{ min_plate_height_ratio }}" placeholder="0.02">
+            <small style="color: var(--text-muted); font-size: 0.78rem;">Ej: 0.02 equivale al 2% del alto total del frame.</small>
+          </div>
+          <div class="form-group">
+            <label>Confianza Mínima de Vehículo (YOLO)</label>
+            <input type="text" name="min_vehicle_confidence" value="{{ min_vehicle_confidence }}" placeholder="0.78">
+            <small style="color: var(--text-muted); font-size: 0.78rem;">Nivel mínimo de confianza YOLO para detectar un vehículo (por defecto 0.78).</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="button-group" style="margin-bottom: 2rem;">
+      <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center;">
+        <i class="ph ph-floppy-disk"></i> Guardar Configuración
+      </button>
+    </div>
+  </form>
+
+  <hr style="border: 0; border-top: 1px dashed rgba(120,120,120,0.2); margin: 2rem 0;">
+
+  <!-- 3. Control de Servicios -->
+  <div>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+      <h3 style="font-size: 1.15rem; font-weight: 600; color: var(--primary); margin: 0;"><i class="ph ph-power" style="vertical-align: middle;"></i> Control de Servicios</h3>
+      <div class="status-indicator-mini {% if app_running %}active{% else %}inactive{% endif %}" style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; font-weight: 600;">
+        <div class="status-dot" style="width: 8px; height: 8px; border-radius: 50%; background-color: {% if app_running %}var(--success){% else %}var(--danger){% endif %}; {% if app_running %}box-shadow: 0 0 8px var(--success-glow); animation: pulse-success 2s infinite;{% endif %}"></div>
+        <span style="color: {% if app_running %}var(--success){% else %}var(--text-muted){% endif %};">{% if app_running %}EN EJECUCIÓN{% else %}DETENIDO{% endif %}</span>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 2.5rem; flex-wrap: wrap; align-items: center;">
+      <div style="flex: 1.2; min-width: 320px;">
+        <p class="text-muted" style="line-height: 1.6; font-size: 0.95rem; margin: 0;">
+          Gestiona el motor de reconocimiento YOLO y el servidor de streaming RTSP de las cámaras del sistema.
+        </p>
+      </div>
+      <div style="flex: 1; min-width: 320px;">
+        <div class="button-group" style="display: flex; gap: 1rem; width: 100%; flex-wrap: wrap; margin: 0;">
+          {% if not app_running %}
+          <form method="POST" action="/start" style="flex: 1; min-width: 150px; margin: 0;">
+            <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center; background: var(--success); box-shadow: 0 4px 10px rgba(16, 185, 129, 0.2); margin: 0;">
+              <i class="ph ph-play-fill"></i> Iniciar Servicios
+            </button>
+          </form>
+          {% else %}
+          <form method="POST" action="/stop" onsubmit="return confirm('¿Detener todos los servicios de reconocimiento?');" style="flex: 1; min-width: 140px; margin: 0;">
+            <button type="submit" class="btn btn-danger" style="width: 100%; justify-content: center; margin: 0;">
+              <i class="ph ph-stop-fill"></i> Detener
+            </button>
+          </form>
+
+          <form method="POST" action="/restart" onsubmit="return confirm('¿Reiniciar servicios para aplicar cambios?');" style="flex: 1; min-width: 140px; margin: 0;">
+            <button type="submit" class="btn btn-secondary" style="width: 100%; justify-content: center; margin: 0;">
+              <i class="ph ph-arrows-clockwise"></i> Reiniciar
+            </button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2><i class="ph ph-terminal"></i> Terminal en Vivo (app.py)</h2>
+  </div>
+  <div id="logs-container">Esperando logs...</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Script para logs SSE
+  const logsContainer = document.getElementById('logs-container');
+  const eventSource = new EventSource('/logs_stream');
+
+  eventSource.onmessage = function(event) {
+    const div = document.createElement('div');
+    div.textContent = event.data;
+    logsContainer.appendChild(div);
+
+    // Auto-scroll al final
+    logsContainer.scrollTop = logsContainer.scrollHeight;
+
+    // Limitar cantidad de líneas en UI para evitar lag
+    if(logsContainer.childElementCount > 100) {
+      logsContainer.removeChild(logsContainer.firstChild);
+    }
+  };
+
+  eventSource.onerror = function() {
+    console.log("Reconectando stream de logs...");
+  };
+</script>
+{% endblock %}

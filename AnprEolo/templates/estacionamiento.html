@@ -1,0 +1,462 @@
+{% extends "layout.html" %}
+
+{% block title %}Estacionamiento - EOLO{% endblock %}
+{% block page_title %}Estacionamiento{% endblock %}
+{% block page_subtitle %}Placas exentas activas y registro de salidas{% endblock %}
+
+{% block content %}
+
+<!-- Resumen rápido -->
+<div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+  <div class="card"
+    style="flex: 1; min-width: 160px; padding: 1.2rem 1.5rem; display: flex; align-items: center; gap: 1rem;">
+    <div
+      style="background: var(--primary-light, #e8f4ff); border-radius: 50%; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;">
+      <i class="ph-fill ph-letter-circle-p" style="font-size: 1.4rem; color: var(--primary);"></i>
+    </div>
+    <div>
+      <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 0;">Exentos pendientes</p>
+      <p style="font-size: 1.6rem; font-weight: 700; margin: 0; color: var(--primary);">{{ exentos_pendientes|length }}
+      </p>
+    </div>
+  </div>
+  <div class="card"
+    style="flex: 1; min-width: 160px; padding: 1.2rem 1.5rem; display: flex; align-items: center; gap: 1rem;">
+    <div
+      style="background: #f0fdf4; border-radius: 50%; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;">
+      <i class="ph-fill ph-check-circle" style="font-size: 1.4rem; color: var(--success);"></i>
+    </div>
+    <div>
+      <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 0;">Salidas registradas</p>
+      <p style="font-size: 1.6rem; font-weight: 700; margin: 0; color: var(--success);">{{ movimientos|length }}</p>
+    </div>
+  </div>
+  <div class="card"
+    style="flex: 1; min-width: 160px; padding: 1.2rem 1.5rem; display: flex; align-items: center; gap: 1rem;">
+    <div
+      style="background: #fff7ed; border-radius: 50%; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;">
+      <i class="ph-fill ph-cloud-arrow-up" style="font-size: 1.4rem; color: #f97316;"></i>
+    </div>
+    <div>
+      <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 0;">Pendientes de sync</p>
+      <p style="font-size: 1.6rem; font-weight: 700; margin: 0; color: #f97316;">{{ movimientos | selectattr('sync',
+        'equalto', 0) | list | length }}</p>
+    </div>
+  </div>
+  <div style="display: flex; align-items: center;">
+    <form method="POST" action="/exentos_estacionamiento/sync">
+      <button type="submit" class="btn btn-primary" style="gap: 0.5rem;">
+        <i class="ph ph-arrows-clockwise"></i> Actualizar exentos
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs-container" style="margin-bottom: 1.5rem;">
+  <div class="tabs-header"
+    style="display: flex; gap: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+    <button class="tab-btn active" onclick="showTab('pendientes')" id="tab-btn-pendientes">
+      <i class="ph ph-clock"></i> Exentos Activos
+      <span class="badge badge-primary" style="margin-left: 0.4rem;">{{ exentos_pendientes|length }}</span>
+    </button>
+    <button class="tab-btn" onclick="showTab('usados')" id="tab-btn-usados">
+      <i class="ph ph-check"></i> Exentos Usados
+      <span class="badge badge-secondary" style="margin-left: 0.4rem;">{{ exentos_usados|length }}</span>
+    </button>
+    <button class="tab-btn" onclick="showTab('movimientos')" id="tab-btn-movimientos">
+      <i class="ph ph-car"></i> Salidas Registradas
+      <span class="badge badge-secondary" style="margin-left: 0.4rem;">{{ movimientos|length }}</span>
+    </button>
+    <button class="tab-btn" onclick="showTab('inventario')" id="tab-btn-inventario">
+      <i class="ph ph-wallet"></i> Inventario Pendiente
+      <span class="badge badge-secondary" style="margin-left: 0.4rem;">{{ inventario_estacionamiento|length }}</span>
+    </button>
+    <button class="tab-btn" onclick="showTab('cobros')" id="tab-btn-cobros">
+      <i class="ph ph-receipt"></i> Cobros Registrados
+      <span class="badge badge-secondary" style="margin-left: 0.4rem;">{{ cobros_inventario|length }}</span>
+    </button>
+    <button class="tab-btn" onclick="showTab('config')" id="tab-btn-config">
+      <i class="ph ph-sliders"></i> Configuración
+    </button>
+  </div>
+</div>
+
+<!-- TAB: Exentos pendientes -->
+<div id="tab-pendientes" class="tab-content active">
+  <div class="card">
+    <div class="card-header">
+      <h2><i class="ph ph-clock-countdown"></i> Placas exentas en espera de salida</h2>
+    </div>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Placa</th>
+            <th>ID Movimiento (Reserva)</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in exentos_pendientes %}
+          <tr>
+            <td>
+              <span style="display: inline-flex; align-items: center; gap: 0.5rem;">
+                <i class="ph-fill ph-identification-badge" style="color: var(--primary);"></i>
+                <strong style="font-size: 1rem; letter-spacing: 0.05em;">{{ row.placa }}</strong>
+              </span>
+            </td>
+            <td>
+              <code
+                style="font-size: 0.78rem; background: var(--bg-secondary, #f5f5f5); padding: 0.2rem 0.5rem; border-radius: 4px;">{{ row.id_movimiento }}</code>
+            </td>
+            <td>
+              <span
+                style="display: inline-flex; align-items: center; gap: 0.4rem; background: #e8f5e9; color: #2e7d32; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600;">
+                <i class="ph-fill ph-circle" style="font-size: 0.5rem;"></i> Pendiente
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not exentos_pendientes %}
+          <tr>
+            <td colspan="3" style="text-align: center; padding: 3rem; color: var(--text-secondary);">
+              <i class="ph ph-check-circle"
+                style="font-size: 2rem; display: block; margin-bottom: 0.75rem; opacity: 0.4;"></i>
+              No hay exentos activos en este momento.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: Exentos usados -->
+<div id="tab-usados" class="tab-content" style="display:none;">
+  <div class="card">
+    <div class="card-header">
+      <h2><i class="ph ph-check-square"></i> Exentos ya utilizados</h2>
+    </div>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Placa</th>
+            <th>ID Movimiento (Reserva)</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in exentos_usados %}
+          <tr>
+            <td>
+              <span style="display: inline-flex; align-items: center; gap: 0.5rem;">
+                <i class="ph ph-identification-badge" style="color: var(--text-secondary);"></i>
+                <strong style="letter-spacing: 0.05em;">{{ row.placa }}</strong>
+              </span>
+            </td>
+            <td>
+              <code
+                style="font-size: 0.78rem; background: var(--bg-secondary, #f5f5f5); padding: 0.2rem 0.5rem; border-radius: 4px;">{{ row.id_movimiento }}</code>
+            </td>
+            <td>
+              <span
+                style="display: inline-flex; align-items: center; gap: 0.4rem; background: #f3f4f6; color: #6b7280; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600;">
+                <i class="ph ph-check" style="font-size: 0.9rem;"></i> Usado
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not exentos_usados %}
+          <tr>
+            <td colspan="3" style="text-align: center; padding: 3rem; color: var(--text-secondary);">
+              <i class="ph ph-info" style="font-size: 2rem; display: block; margin-bottom: 0.75rem; opacity: 0.4;"></i>
+              No hay exentos usados aún.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: Movimientos de salida -->
+<div id="tab-movimientos" class="tab-content" style="display:none;">
+  <div class="card">
+    <div class="card-header">
+      <h2><i class="ph ph-arrow-square-out"></i> Salidas por exento registradas</h2>
+    </div>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Captura</th>
+            <th>Placa</th>
+            <th>Reserva</th>
+            <th>Fecha Salida</th>
+            <th>Cámara</th>
+            <th style="text-align:center;">Sync</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for mov in movimientos %}
+          <tr>
+            <td style="width: 90px; padding: 0.5rem;">
+              {% if mov.imagen_salida %}
+              <img src="{{ url_for('static', filename=mov.imagen_salida) }}" alt="Salida"
+                style="width: 75px; height: 48px; object-fit: cover; border-radius: 5px; cursor: pointer; border: 1px solid var(--border-light);"
+                onclick="openImageModal(this.src)">
+              {% else %}
+              <div
+                style="width: 75px; height: 48px; background: #f3f4f6; border-radius: 5px; border: 1px dashed #d1d5db; display: flex; align-items: center; justify-content: center; font-size: 0.6rem; color: #9ca3af;">
+                Sin img.
+              </div>
+              {% endif %}
+            </td>
+            <td><strong style="letter-spacing: 0.05em; font-size: 1rem;">{{ mov.placa }}</strong></td>
+            <td>
+              <code
+                style="font-size: 0.75rem; background: var(--bg-secondary, #f5f5f5); padding: 0.2rem 0.5rem; border-radius: 4px;">{{ mov.id_movimiento_reserva }}</code>
+            </td>
+            <td>{{ mov.fecha_salida }}</td>
+            <td>
+              <span style="font-size: 0.85rem;">
+                <i class="ph ph-sign-out" style="color: var(--danger);"></i> {{ mov.camara_salida or '-' }}
+              </span>
+            </td>
+            <td style="text-align: center;">
+              {% if mov.sync %}
+              <i class="ph ph-cloud-check" style="font-size: 1.3rem; color: var(--success);"
+                title="Sincronizado con Bubble"></i>
+              {% else %}
+              <i class="ph ph-cloud-arrow-up sync-pending" style="font-size: 1.3rem; color: #f97316;"
+                title="Pendiente de sincronizar"></i>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not movimientos %}
+          <tr>
+            <td colspan="6" style="text-align: center; padding: 3rem; color: var(--text-secondary);">
+              <i class="ph ph-car" style="font-size: 2rem; display: block; margin-bottom: 0.75rem; opacity: 0.4;"></i>
+              No hay salidas de exentos registradas aún.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: Inventario Pendiente -->
+<div id="tab-inventario" class="tab-content" style="display:none;">
+  <div class="card">
+    <div class="card-header">
+      <h2><i class="ph ph-wallet"></i> Placas con reserva por cobrar</h2>
+    </div>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Placa</th>
+            <th>ID Reserva</th>
+            <th>Wallet ID</th>
+            <th>Balance Wallet</th>
+            <th>Total Por Pagar</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in inventario_estacionamiento %}
+          <tr>
+            <td>
+              <span style="display: inline-flex; align-items: center; gap: 0.5rem;">
+                <i class="ph-fill ph-identification-badge" style="color: var(--primary);"></i>
+                <strong style="font-size: 1rem; letter-spacing: 0.05em;">{{ row.placa }}</strong>
+              </span>
+            </td>
+            <td>
+              <code
+                style="font-size: 0.78rem; background: var(--bg-secondary, #f5f5f5); padding: 0.2rem 0.5rem; border-radius: 4px;">{{ row.uid_reserva }}</code>
+            </td>
+            <td>{{ row.id_wallet }}</td>
+            <td style="color: var(--success); font-weight: 600;">${{ "%.2f"|format(row.balance_wallet) }}</td>
+            <td style="color: var(--danger); font-weight: 600;">${{ "%.2f"|format(row.total_por_pagar) }}</td>
+          </tr>
+          {% endfor %}
+          {% if not inventario_estacionamiento %}
+          <tr>
+            <td colspan="5" style="text-align: center; padding: 3rem; color: var(--text-secondary);">
+              <i class="ph ph-check-circle"
+                style="font-size: 2rem; display: block; margin-bottom: 0.75rem; opacity: 0.4;"></i>
+              No hay inventario pendiente en este momento.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: Cobros Registrados -->
+<div id="tab-cobros" class="tab-content" style="display:none;">
+  <div class="card">
+    <div class="card-header">
+      <h2><i class="ph ph-receipt"></i> Cobros de inventario registrados (Salida)</h2>
+    </div>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Placa</th>
+            <th>ID Reserva</th>
+            <th>Monto Total Cobrado</th>
+            <th style="text-align:center;">Sync</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for cobro in cobros_inventario %}
+          <tr>
+            <td>
+              <span style="display: inline-flex; align-items: center; gap: 0.5rem;">
+                <i class="ph ph-identification-badge" style="color: var(--text-secondary);"></i>
+                <strong style="font-size: 1rem; letter-spacing: 0.05em;">{{ cobro.placa }}</strong>
+              </span>
+            </td>
+            <td>
+              <code
+                style="font-size: 0.78rem; background: var(--bg-secondary, #f5f5f5); padding: 0.2rem 0.5rem; border-radius: 4px;">{{ cobro.uid_reserva }}</code>
+            </td>
+            <td style="color: var(--success); font-weight: 600;">${{ "%.2f"|format(cobro.monto_total) }}</td>
+            <td style="text-align: center;">
+              {% if cobro.sync %}
+              <i class="ph ph-cloud-check" style="font-size: 1.3rem; color: var(--success);"
+                title="Sincronizado con Bubble"></i>
+              {% else %}
+              <i class="ph ph-cloud-arrow-up sync-pending" style="font-size: 1.3rem; color: #f97316;"
+                title="Pendiente de sincronizar"></i>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not cobros_inventario %}
+          <tr>
+            <td colspan="4" style="text-align: center; padding: 3rem; color: var(--text-secondary);">
+              <i class="ph ph-receipt"
+                style="font-size: 2rem; display: block; margin-bottom: 0.75rem; opacity: 0.4;"></i>
+              No hay cobros registrados aún.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: Configuración -->
+<div id="tab-config" class="tab-content" style="display:none;">
+  <div class="card">
+    <div class="card-header">
+      <h2><i class="ph ph-gear"></i> Configuración de Estacionamiento</h2>
+    </div>
+    <p class="mb-4 text-muted">Configura el identificador único para este punto de estacionamiento.</p>
+
+    <form method="POST" action="/estacionamiento" class="mb-2">
+      <div style="display: flex; gap: 1.5rem; margin-bottom: 1.5rem;">
+        <div class="form-group" style="flex: 1; margin-bottom: 0;">
+          <label>UID Estacionamiento (Bubble)</label>
+          <input type="text" name="id_estacionamiento" value="{{ id_estacionamiento }}" placeholder="Ej: parking_001">
+        </div>
+      </div>
+
+      <div class="button-group"
+        style="border-top: 1px solid var(--border-light); padding-top: 1.5rem; display: flex; gap: 1rem;">
+        <button type="submit" class="btn btn-secondary">
+          <i class="ph ph-floppy-disk"></i> Guardar Configuración
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal imagen -->
+<div id="image-modal" onclick="this.style.display='none'" style="display:none; position:fixed; z-index:1000; left:0; top:0; width:100%; height:100%;
+            background:rgba(0,0,0,0.88); align-items:center; justify-content:center; flex-direction:column;">
+  <span style="position:absolute; top:20px; right:35px; color:#fff; font-size:36px; cursor:pointer;">&times;</span>
+  <img id="modal-img" style="max-width:90%; max-height:85%; border-radius:8px; box-shadow:0 0 30px rgba(0,0,0,0.6);">
+</div>
+
+<style>
+  .tab-btn {
+    background: none;
+    border: none;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-family: inherit;
+    font-size: 0.9rem;
+    border-bottom: 2px solid transparent;
+    transition: all 0.25s;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .tab-btn.active {
+    color: var(--primary) !important;
+    border-bottom: 2px solid var(--primary) !important;
+    font-weight: 600;
+  }
+
+  .tab-btn:hover:not(.active) {
+    color: var(--text-primary);
+  }
+
+  .sync-pending {
+    animation: pulse-sync 2s infinite;
+  }
+
+  @keyframes pulse-sync {
+    0% {
+      opacity: 0.4;
+    }
+
+    50% {
+      opacity: 1;
+    }
+
+    100% {
+      opacity: 0.4;
+    }
+  }
+
+  #image-modal {
+    display: none;
+    flex-direction: column;
+  }
+</style>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function showTab(name) {
+    document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + name).style.display = 'block';
+    document.getElementById('tab-btn-' + name).classList.add('active');
+  }
+
+  function openImageModal(src) {
+    const modal = document.getElementById('image-modal');
+    document.getElementById('modal-img').src = src;
+    modal.style.display = 'flex';
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,359 @@
+{% extends "layout.html" %}
+
+{% block page_title %}Accesos{% endblock %}
+{% block page_subtitle %}Registro de entradas, salidas y base de placas{% endblock %}
+
+{% block content %}
+<div class="tabs-container" style="margin-bottom: 2rem;">
+  <div class="tabs-header"
+    style="display: flex; gap: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+    <button class="tab-btn {% if active_tab == 'movimientos' %}active{% endif %}" onclick="showTab('movimientos')" id="tab-btn-movimientos"
+      style="background: none; border: none; padding: 0.5rem 1rem; cursor: pointer; color: {% if active_tab == 'movimientos' %}var(--primary){% else %}var(--text-secondary){% endif %}; font-weight: 600; border-bottom: {% if active_tab == 'movimientos' %}2px solid var(--primary){% else %}none{% endif %}; transition: all 0.3s;">
+      <i class="ph ph-door-open"></i> Movimientos
+    </button>
+    <button class="tab-btn {% if active_tab == 'placas' %}active{% endif %}" onclick="showTab('placas')" id="tab-btn-placas"
+      style="background: none; border: none; padding: 0.5rem 1rem; cursor: pointer; color: {% if active_tab == 'placas' %}var(--primary){% else %}var(--text-secondary){% endif %}; font-weight: 600; border-bottom: {% if active_tab == 'placas' %}2px solid var(--primary){% else %}none{% endif %}; transition: all 0.3s;">
+      <i class="ph ph-car-profile"></i> Base de Placas
+    </button>
+    <button class="tab-btn {% if active_tab == 'config' %}active{% endif %}" onclick="showTab('config')" id="tab-btn-config"
+      style="background: none; border: none; padding: 0.5rem 1rem; cursor: pointer; color: {% if active_tab == 'config' %}var(--primary){% else %}var(--text-secondary){% endif %}; font-weight: 600; border-bottom: {% if active_tab == 'config' %}2px solid var(--primary){% else %}none{% endif %}; transition: all 0.3s;">
+      <i class="ph ph-sliders"></i> Configuración
+    </button>
+  </div>
+</div>
+
+<!-- Tab: Movimientos -->
+<div id="tab-movimientos" class="tab-content" style="{% if active_tab == 'movimientos' %}display: block;{% else %}display: none;{% endif %}">
+  <div class="card">
+    <div class="card-header">
+      <h2><i class="ph ph-list-numbers"></i> Historial de Accesos</h2>
+      <span class="badge badge-primary">{{ accesos|length }} registros</span>
+    </div>
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Capturas (E/S)</th>
+            <th>Folio</th>
+            <th>Sinc.</th>
+            <th>Placa</th>
+            <th>Teléfono</th>
+            <th>Entrada</th>
+            <th>Salida</th>
+            <th>Cámaras (E/S)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for mov in accesos %}
+          <tr>
+            <td style="width: 180px; padding: 0.5rem;">
+              <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <div style="text-align: center;">
+                  {% if mov.imagen %}
+                  <img src="{{ url_for('static', filename=mov.imagen) }}" alt="Entrada"
+                    style="width: 70px; height: 45px; object-fit: cover; border-radius: 4px; cursor: pointer; border: 1px solid var(--border-light);"
+                    onclick="openImageModal(this.src, 'Captura de Entrada')">
+                  <small style="display: block; font-size: 0.65rem; color: var(--success);"><i class="ph ph-sign-in"></i></small>
+                  {% else %}
+                  <div style="width: 70px; height: 45px; background: #eee; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 0.6rem; color: #999;">-</div>
+                  {% endif %}
+                </div>
+                <div style="text-align: center;">
+                  {% if mov.imagen_salida %}
+                  <img src="{{ url_for('static', filename=mov.imagen_salida) }}" alt="Salida"
+                    style="width: 70px; height: 45px; object-fit: cover; border-radius: 4px; cursor: pointer; border: 1px solid var(--border-light);"
+                    onclick="openImageModal(this.src, 'Captura de Salida')">
+                  <small style="display: block; font-size: 0.65rem; color: var(--danger);"><i class="ph ph-sign-out"></i></small>
+                  {% else %}
+                  <div style="width: 70px; height: 45px; background: #f8f8f8; border-radius: 4px; border: 1px dashed #ddd; display: flex; align-items: center; justify-content: center; font-size: 0.6rem; color: #bbb;">...</div>
+                  {% endif %}
+                </div>
+              </div>
+            </td>
+            <td>
+              <span class="badge badge-secondary">
+                #{{ mov.prefijo or 'CAM' }}{{ mov.folio }}
+              </span>
+            </td>
+            <td style="text-align: center;">
+              {% if mov.sync %}
+              <div class="sync-indicator synced" title="Sincronizado: {{ mov.uid_bubble or 'OK' }}">
+                <i class="ph ph-cloud-check" style="font-size: 1.2rem; color: var(--success);"></i>
+              </div>
+              {% else %}
+              <div class="sync-indicator pending" title="Pendiente de sincronizar">
+                <i class="ph ph-cloud-arrow-up" style="font-size: 1.2rem; color: #aaa;"></i>
+              </div>
+              {% endif %}
+            </td>
+            <td><strong>{{ mov.placa }}</strong></td>
+            <td>{{ mov.telefono or '-' }}</td>
+            <td>{{ mov.fecha_entrada }}</td>
+            <td>
+              {% if mov.fecha_salida %}
+              {{ mov.fecha_salida }}
+              {% else %}
+              <span class="status-indicator active" style="font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 10px;">
+                <div class="status-dot"></div> En sitio
+              </span>
+              {% endif %}
+            </td>
+            <td>
+              <div style="font-size: 0.85rem;">
+                <i class="ph ph-sign-in" style="color: var(--success);"></i> {{ mov.camara_entrada }}<br>
+                {% if mov.camara_salida %}
+                <i class="ph ph-sign-out" style="color: var(--danger);"></i> {{ mov.camara_salida }}
+                {% else %}
+                <i class="ph ph-sign-out" style="opacity: 0.3;"></i> <small style="opacity: 0.5;">Pendiente</small>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not accesos %}
+          <tr>
+            <td colspan="8" style="text-align: center; padding: 3rem;">
+              <i class="ph ph-info" style="font-size: 2rem; opacity: 0.3; display: block; margin-bottom: 1rem;"></i>
+              No hay movimientos registrados recientemente.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Tab: Base de Placas -->
+<div id="tab-placas" class="tab-content" style="{% if active_tab == 'placas' %}display: block;{% else %}display: none;{% endif %}">
+  <div class="card">
+    <div class="card-header">
+      <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+        <h2><i class="ph ph-car-profile"></i> Vehículos Registrados</h2>
+        <span class="badge badge-primary">{{ total_count }} registros</span>
+      </div>
+
+      <form method="GET" action="/accesos" style="display: flex; gap: 0.5rem; flex: 1; max-width: 400px; margin-left: auto;">
+        <input type="hidden" name="tab" value="placas">
+        <div style="position: relative; flex: 1;">
+          <i class="ph ph-magnifying-glass" style="position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); color: var(--text-muted);"></i>
+          <input type="text" name="search" value="{{ search }}" placeholder="Buscar placa o residente..." style="padding-left: 2.5rem; margin-bottom: 0; width: 100%;">
+        </div>
+        <button type="submit" class="btn btn-secondary" style="padding: 0.75rem;">
+          <i class="ph ph-funnel"></i>
+        </button>
+        {% if search %}
+        <a href="/accesos?tab=placas" class="btn btn-danger" style="padding: 0.75rem;" title="Limpiar búsqueda">
+          <i class="ph ph-x"></i>
+        </a>
+        {% endif %}
+      </form>
+    </div>
+
+    <div class="table-container mt-4">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Placa</th>
+            <th>Residente</th>
+            <th>Teléfono</th>
+            <th style="width: 100px; text-align: center;">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="plates-body">
+          {% for item in placas %}
+          <tr>
+            <td style="color: var(--text-muted);">{{ (page - 1) * per_page + loop.index }}</td>
+            <td>{{ item.placa }}</td>
+            <td>{{ item.nombre or '---' }}</td>
+            <td>{{ item.telefono or '---' }}</td>
+            <td style="text-align: center;">
+              <button class="btn btn-danger" style="padding: 0.5rem;" onclick="deletePlate('{{ item.placa }}', this)">
+                <i class="ph ph-trash"></i>
+              </button>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" class="text-center" style="padding: 2rem; color: var(--text-muted);">
+              {% if search %}
+              No se encontraron resultados para "{{ search }}".
+              {% else %}
+              No hay placas registradas. Realiza una sincronización.
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="pagination mt-4" style="display: flex; justify-content: center; align-items: center; gap: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-light);">
+      {% if page > 1 %}
+      <a href="{{ url_for('view_accesos', tab='placas', page=page-1, search=search) }}" class="btn btn-secondary" style="padding: 0.5rem 1rem;">
+        <i class="ph ph-caret-left"></i> Anterior
+      </a>
+      {% else %}
+      <button class="btn btn-secondary" disabled style="padding: 0.5rem 1rem; opacity: 0.5; cursor: not-allowed;">
+        <i class="ph ph-caret-left"></i> Anterior
+      </button>
+      {% endif %}
+
+      <span style="font-weight: 500; color: var(--text-secondary);">
+        Página <span style="color: var(--primary);">{{ page }}</span> de {{ total_pages }}
+      </span>
+
+      {% if page < total_pages %}
+      <a href="{{ url_for('view_accesos', tab='placas', page=page+1, search=search) }}" class="btn btn-secondary" style="padding: 0.5rem 1rem;">
+        Siguiente <i class="ph ph-caret-right"></i>
+      </a>
+      {% else %}
+      <button class="btn btn-secondary" disabled style="padding: 0.5rem 1rem; opacity: 0.5; cursor: not-allowed;">
+        Siguiente <i class="ph ph-caret-right"></i>
+      </button>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Tab: Configuración -->
+<div id="tab-config" class="tab-content" style="{% if active_tab == 'config' %}display: block;{% else %}display: none;{% endif %}">
+  <div class="card">
+    <div class="card-header">
+      <h2><i class="ph ph-gear"></i> Configuración de Acceso</h2>
+    </div>
+    <p class="mb-4 text-muted">Configura el identificador único para este punto de acceso y sincroniza la base de datos de residentes.</p>
+
+    <form method="POST" action="/accesos" class="mb-2">
+      <div style="display: flex; gap: 1.5rem; margin-bottom: 1.5rem;">
+        <div class="form-group" style="flex: 1; margin-bottom: 0;">
+          <label>UID Acceso (Bubble)</label>
+          <input type="text" name="id_acceso" value="{{ id_acceso }}" placeholder="Ej: acceso_norte_1">
+        </div>
+      </div>
+
+      <div class="button-group" style="border-top: 1px solid var(--border-light); padding-top: 1.5rem; display: flex; gap: 1rem;">
+        <button type="submit" class="btn btn-secondary">
+          <i class="ph ph-floppy-disk"></i> Guardar Configuración
+        </button>
+        <button type="button" id="btn-sync" class="btn btn-primary" onclick="syncPlates()">
+          <i class="ph ph-arrows-clockwise"></i> Sincronizar Placas
+        </button>
+      </div>
+    </form>
+
+    <div id="sync-status" class="mt-4" style="display: none; padding: 0.75rem; border-radius: 0.5rem; background: #f1f5f9; border: 1px solid var(--border-light);">
+    </div>
+  </div>
+</div>
+
+<!-- Modal Imagen -->
+<div id="image-modal" class="modal" onclick="this.style.display='none'"
+  style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.9); align-items: center; justify-content: center; flex-direction: column;">
+  <span style="position: absolute; top: 20px; right: 35px; color: #f1f1f1; font-size: 40px; font-weight: bold; cursor: pointer;">&times;</span>
+  <h3 id="modal-title" style="color: white; margin-bottom: 1rem; font-weight: 500;">Captura</h3>
+  <img id="modal-img" style="margin: auto; display: block; max-width: 90%; max-height: 80%; border-radius: 8px; box-shadow: 0 0 20px rgba(0,0,0,0.5);">
+</div>
+
+<style>
+  .tab-btn.active {
+    color: var(--primary) !important;
+    border-bottom: 2px solid var(--primary) !important;
+  }
+  .sync-indicator { display: inline-flex; align-items: center; justify-content: center; cursor: help; }
+  .sync-indicator.pending i { animation: pulse-sync 2s infinite; }
+  @keyframes pulse-sync { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+  .modal { display: none; flex-direction: column; }
+</style>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function showTab(tabName) {
+    document.querySelectorAll('.tab-content').forEach(tab => {
+      tab.style.display = 'none';
+    });
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.classList.remove('active');
+      btn.style.color = 'var(--text-secondary)';
+      btn.style.borderBottom = 'none';
+    });
+
+    document.getElementById('tab-' + tabName).style.display = 'block';
+    const activeBtn = document.getElementById('tab-btn-' + tabName);
+    activeBtn.classList.add('active');
+    activeBtn.style.color = 'var(--primary)';
+    activeBtn.style.borderBottom = '2px solid var(--primary)';
+
+    // Cambiar url param tab sin recargar
+    const url = new URL(window.location);
+    url.searchParams.set('tab', tabName);
+    window.history.pushState({}, '', url);
+  }
+
+  function openImageModal(src) {
+    const modal = document.getElementById('image-modal');
+    const modalImg = document.getElementById('modal-img');
+    modal.style.display = "flex";
+    modalImg.src = src;
+  }
+
+  async function deletePlate(placa, btn) {
+    if (!confirm(`¿Eliminar la placa ${placa}?`)) return;
+    try {
+      const btnIcon = btn.innerHTML;
+      btn.innerHTML = '<i class="ph ph-spinner-gap ph-spin"></i>';
+      btn.disabled = true;
+
+      const response = await fetch(`/api/placas/${placa}`, { method: 'DELETE' });
+      if (response.ok) {
+        const row = btn.closest('tr');
+        row.style.opacity = '0';
+        setTimeout(() => row.remove(), 300);
+      } else {
+        alert("Error al eliminar la placa.");
+        btn.innerHTML = btnIcon;
+        btn.disabled = false;
+      }
+    } catch (e) {
+      alert("Error de conexión");
+      btn.disabled = false;
+    }
+  }
+
+  async function syncPlates() {
+    const btn = document.getElementById('btn-sync');
+    const statusDiv = document.getElementById('sync-status');
+    const originalHtml = btn.innerHTML;
+
+    btn.innerHTML = '<i class="ph ph-spinner-gap ph-spin"></i> Sincronizando...';
+    btn.disabled = true;
+    statusDiv.style.display = 'block';
+    statusDiv.innerHTML = '<i class="ph ph-spinner-gap ph-spin"></i> Sincronizando BD con servidor web...';
+    statusDiv.style.color = 'var(--text-secondary)';
+
+    try {
+      const response = await fetch('/sync_plates', { method: 'POST' });
+      const data = await response.json();
+
+      if(response.ok) {
+        statusDiv.innerHTML = `<i class="ph-fill ph-check-circle" style="color: var(--success);"></i> ${data.message}`;
+        setTimeout(() => window.location.reload(), 1500);
+      } else {
+        statusDiv.innerHTML = `<i class="ph-fill ph-warning-circle" style="color: var(--danger);"></i> Error: ${data.error}`;
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
+    } catch(err) {
+      statusDiv.innerHTML = `<i class="ph-fill ph-warning-circle" style="color: var(--danger);"></i> Error de conexión con el servidor local.`;
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+  }
+</script>
+{% endblock %}

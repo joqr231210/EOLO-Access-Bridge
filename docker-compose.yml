@@ -48,10 +48,15 @@ services:
       ANPR_CONTROL_BASE_URL: http://127.0.0.1:8090
       ANPR_DB_FILE: /app/data/plates.db
       ANPR_CONFIG_FILE: /app/data/config.json
+      ANPR_DETECTIONS_FILE: /app/data/anpr-detections.json
+      ANPR_STATUS_FILE: /app/data/anpr-status.json
+      ANPR_SNAPSHOT_DIR: /app/data/anpr-snapshots
       ANPR_STREAM_DIR: /app/stream
     expose:
       - "8090"
       - "8083"
+    ports:
+      - "${ANPR_STREAM_HOST_PORT:-8083}:8083"
     volumes:
       - ./AnprEolo/plates.db:/app/data/plates.db
       - ./AnprEolo/config.json:/app/data/config.json

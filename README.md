@@ -1,6 +1,6 @@
-# EOLO Hikvision Local
+# EOLO Access Bridge
 
-Servicio local para operar un terminal Hikvision ISAPI desde una LAN y sincronizar eventos/tareas con EOLO.
+Servicio local para operar accesos EOLO desde una LAN. Incluye panel de operador, integracion EOLO Cloud, captura local de fotos, ANPR/RTSP y empaquetado instalable con Electron.
 
 ## Funciones incluidas
 
@@ -36,7 +36,46 @@ npm install
 npm run dev
 ```
 
-Abre `http://localhost:8080`.
+Abre:
+
+- Operador: `http://localhost:8080`
+- Ajustes tecnicos: `http://localhost:8080/settings`
+
+## Instalador Electron con ANPR
+
+macOS ARM64:
+
+```bash
+npm install
+npm run desktop:mac:full
+```
+
+Windows x64, desde una maquina Windows con Git, Node.js LTS y Python 3.11:
+
+```powershell
+npm install
+npm run desktop:win:full
+```
+
+El instalador Windows queda en:
+
+```text
+release\EOLO Access Bridge Setup 0.2.3.exe
+```
+
+El instalador macOS queda en:
+
+```text
+release/EOLO Access Bridge-0.2.3-arm64.dmg
+```
+
+Notas:
+
+- El build Windows debe ejecutarse en Windows porque PyInstaller necesita binarios nativos de OpenCV/PyTorch/onnxruntime.
+- El equipo operativo solo necesita el instalador generado; no necesita Docker, Node ni Python.
+- Los datos locales quedan fuera de la app instalada:
+  - Windows: `%APPDATA%\EOLO Access Bridge`
+  - macOS: `~/Library/Application Support/EOLO Access Bridge`
 
 ## Arranque con Docker
 

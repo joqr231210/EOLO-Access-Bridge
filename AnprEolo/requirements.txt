@@ -1,0 +1,7 @@
+ultralytics
+fast-plate-ocr[onnx]
+opencv-python
+numpy
+requests
+flask
+gunicorn

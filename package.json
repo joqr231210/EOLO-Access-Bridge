@@ -1,11 +1,23 @@
 {
   "name": "eolo-hikvision-local",
-  "version": "0.1.0",
+  "version": "0.2.3",
   "description": "Servicio local EOLO para terminales Hikvision ISAPI.",
+  "author": "EOLO",
   "type": "module",
+  "main": "desktop/main.cjs",
+  "productName": "EOLO Access Bridge",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "sidecars:prepare": "node scripts/prepare-desktop-sidecars.mjs",
+    "anpr:build": "bash scripts/build-anpr-sidecar.sh",
+    "anpr:build:win": "powershell -ExecutionPolicy Bypass -File scripts/build-anpr-sidecar.ps1",
+    "desktop": "electron .",
+    "desktop:dir": "electron-builder --dir --publish never",
+    "desktop:mac": "electron-builder --mac dmg --publish never",
+    "desktop:win": "electron-builder --win nsis --x64 --publish never",
+    "desktop:mac:full": "npm run sidecars:prepare && npm run anpr:build && npm run desktop:mac",
+    "desktop:win:full": "npm run sidecars:prepare && npm run anpr:build:win && npm run desktop:win"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -16,5 +28,67 @@
     "helmet": "^8.0.0",
     "multer": "^2.2.0",
     "undici": "^7.1.0"
+  },
+  "devDependencies": {
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.eolo.accessbridge",
+    "productName": "EOLO Access Bridge",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/**/*",
+      "src/**/*",
+      "public/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "beforePack": "scripts/electron-before-pack.cjs",
+    "extraResources": [
+      {
+        "from": "dist/anpr-eolo",
+        "to": "sidecars/anpr",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "vendor/sidecars/go2rtc",
+        "to": "sidecars/go2rtc",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "category": "public.app-category.business",
+      "target": [
+        "dmg"
+      ],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName} Setup ${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

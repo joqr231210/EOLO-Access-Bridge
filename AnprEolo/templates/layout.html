@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Panel de Control - EOLO{% endblock %}</title>
+
+  <!-- Modern Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Phosphor Icons -->
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <span>EOLO</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="/" class="nav-item {% if request.path == '/' %}active{% endif %}">
+          <i class="ph ph-sliders"></i>
+          <span>Configuración</span>
+        </a>
+        <a href="/hardware" class="nav-item {% if request.path == '/hardware' %}active{% endif %}">
+          <i class="ph ph-webcam"></i>
+          <span>Cámaras y Barreras</span>
+        </a>
+        <a href="/accesos" class="nav-item {% if request.path == '/accesos' %}active{% endif %}">
+          <i class="ph ph-door-open"></i>
+          <span>Accesos</span>
+        </a>
+        <a href="/estacionamiento" class="nav-item {% if request.path == '/estacionamiento' %}active{% endif %}">
+          <i class="ph ph-letter-circle-p"></i>
+          <span>Estacionamiento</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="status-indicator {% if app_running %}active{% else %}inactive{% endif %}">
+          <div class="status-dot"></div>
+          <span>Sistema {% if app_running %}Activo{% else %}Detenido{% endif %}</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <header class="top-header">
+        <button id="mobile-menu-btn" class="mobile-menu-btn">
+          <i class="ph ph-list"></i>
+        </button>
+        <div class="header-title">
+          <h1>{% block page_title %}Dashboard{% endblock %}</h1>
+          <p class="subtitle">{% block page_subtitle %}Gestión del sistema ANPR{% endblock %}</p>
+        </div>
+      </header>
+
+      <div class="content-wrapper">
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+
+</html>

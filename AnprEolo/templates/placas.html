@@ -1,0 +1,168 @@
+{% extends "layout.html" %}
+
+{% block page_title %}Base de Placas{% endblock %}
+{% block page_subtitle %}Gestión de residentes autorizados{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h2><i class="ph ph-cloud-arrow-down"></i> Sincronización</h2>
+  </div>
+  <p class="mb-4 text-muted">Obtén la lista más reciente de placas desde el servidor central. Configura el ID de acceso
+    para identificar este punto.</p>
+
+  <form method="POST" action="/placas" class="mb-2">
+    <!-- Fila de UIDs -->
+    <div style="display: flex; gap: 1.5rem; margin-bottom: 1.5rem;">
+      <div class="form-group" style="flex: 1; margin-bottom: 0;">
+        <label>UID Acceso (Bubble)</label>
+        <input type="text" name="id_acceso" value="{{ id_acceso }}" placeholder="Ej: acceso_norte_1">
+      </div>
+      <div class="form-group" style="flex: 1; margin-bottom: 0;">
+        <label>UID Estacionamiento (Bubble)</label>
+        <input type="text" name="id_estacionamiento" value="{{ id_estacionamiento }}" placeholder="Ej: parking_001">
+      </div>
+    </div>
+
+    <!-- Fila de Botones -->
+    <div class="button-group"
+      style="border-top: 1px solid var(--border-light); padding-top: 1.5rem; display: flex; gap: 1rem;">
+      <button type="submit" class="btn btn-secondary">
+        <i class="ph ph-floppy-disk"></i> Guardar Configuración
+      </button>
+      <button type="button" id="btn-sync" class="btn btn-primary" onclick="syncPlates()">
+        <i class="ph ph-arrows-clockwise"></i> Sincronizar BD
+      </button>
+    </div>
+  </form>
+
+  <div id="sync-status" class="mt-4"
+    style="display: none; padding: 0.75rem; border-radius: 0.5rem; background: #f1f5f9; border: 1px solid var(--border-light);">
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+      <h2><i class="ph ph-car-profile"></i> Vehículos Registrados</h2>
+      <span class="badge badge-primary">{{ total_count }} registros</span>
+    </div>
+
+    <!-- Buscador -->
+    <form method="GET" action="/placas"
+      style="display: flex; gap: 0.5rem; flex: 1; max-width: 400px; margin-left: auto;">
+      <div style="position: relative; flex: 1;">
+        <i class="ph ph-magnifying-glass"
+          style="position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); color: var(--text-muted);"></i>
+        <input type="text" name="search" value="{{ search }}" placeholder="Buscar placa o residente..."
+          style="padding-left: 2.5rem; margin-bottom: 0; width: 100%;">
+      </div>
+      <button type="submit" class="btn btn-secondary" style="padding: 0.75rem;">
+        <i class="ph ph-funnel"></i>
+      </button>
+      {% if search %}
+      <a href="/placas" class="btn btn-danger" style="padding: 0.75rem;" title="Limpiar búsqueda">
+        <i class="ph ph-x"></i>
+      </a>
+      {% endif %}
+    </form>
+  </div>
+
+  <div class="table-container mt-4">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Placa</th>
+          <th>Residente</th>
+          <th>Teléfono</th>
+          <th style="width: 100px; text-align: center;">Acciones</th>
+        </tr>
+      </thead>
+      <tbody id="plates-body">
+        {% for item in placas %}
+        <tr>
+          <td style="color: var(--text-muted);">{{ (page - 1) * per_page + loop.index }}</td>
+          <td>{{ item.placa }}</td>
+          <td>{{ item.nombre or '---' }}</td>
+          <td>{{ item.telefono or '---' }}</td>
+          <td style="text-align: center;">
+            <button class="btn btn-danger" style="padding: 0.5rem;" onclick="deletePlate('{{ item.placa }}', this)">
+              <i class="ph ph-trash"></i>
+            </button>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5" class="text-center" style="padding: 2rem; color: var(--text-muted);">
+            {% if search %}
+            No se encontraron resultados para "{{ search }}".
+            {% else %}
+            No hay placas registradas. Realiza una sincronización.
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if total_pages > 1 %}
+  <div class="pagination mt-4"
+    style="display: flex; justify-content: center; align-items: center; gap: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-light);">
+    {% if page > 1 %}
+    <a href="{{ url_for('view_plates', page=page-1, search=search) }}" class="btn btn-secondary"
+      style="padding: 0.5rem 1rem;">
+      <i class="ph ph-caret-left"></i> Anterior
+    </a>
+    {% else %}
+    <button class="btn btn-secondary" disabled style="padding: 0.5rem 1rem; opacity: 0.5; cursor: not-allowed;">
+      <i class="ph ph-caret-left"></i> Anterior
+    </button>
+    {% endif %}
+
+    <span style="font-weight: 500; color: var(--text-secondary);">
+      Página <span style="color: var(--primary);">{{ page }}</span> de {{ total_pages }}
+    </span>
+
+    {% if page < total_pages %} <a href="{{ url_for('view_plates', page=page+1, search=search) }}"
+      class="btn btn-secondary" style="padding: 0.5rem 1rem;">
+      Siguiente <i class="ph ph-caret-right"></i>
+      </a>
+      {% else %}
+      <button class="btn btn-secondary" disabled style="padding: 0.5rem 1rem; opacity: 0.5; cursor: not-allowed;">
+        Siguiente <i class="ph ph-caret-right"></i>
+      </button>
+      {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  async function deletePlate(placa, btn) {
+    if (!confirm(`¿Eliminar la placa ${placa}?`)) return;
+
+    try {
+      const btnIcon = btn.innerHTML;
+      btn.innerHTML = '<i class="ph ph-spinner-gap ph-spin"></i>';
+      btn.disabled = true;
+
+      const response = await fetch(`/api/placas/${placa}`, { method: 'DELETE' });
+      if (response.ok) {
+        const row = btn.closest('tr');
+        row.style.opacity = '0';
+        setTimeout(() => row.remove(), 300);
+      } else {
+        alert("Error al eliminar la placa.");
+        btn.innerHTML = btnIcon;
+        btn.disabled = false;
+      }
+    } catch (e) {
+      alert("Error de conexión");
+      btn.disabled = false;
+    }
+  }
+</script>
+{% endblock %}

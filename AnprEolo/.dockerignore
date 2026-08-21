@@ -1,0 +1,19 @@
+# Base de datos local — se crea en el contenedor en tiempo de ejecución
+plates.db
+config.json
+static/captures/
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Spec de PyInstaller
+*.spec
+
+# Archivos de entorno y configuración local
+.env

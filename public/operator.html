@@ -1,0 +1,818 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EOLO Operador de Acceso</title>
+    <link rel="stylesheet" href="/operator.css" />
+  </head>
+  <body>
+    <svg aria-hidden="true" class="icon-sprite">
+      <symbol id="icon-calendar" viewBox="0 0 24 24">
+        <path d="M8 2v4" />
+        <path d="M16 2v4" />
+        <rect width="18" height="18" x="3" y="4" rx="2" />
+        <path d="M3 10h18" />
+      </symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24">
+        <path d="m21 21-4.34-4.34" />
+        <circle cx="11" cy="11" r="8" />
+      </symbol>
+      <symbol id="icon-filter" viewBox="0 0 24 24">
+        <path d="M3 5h18" />
+        <path d="M7 12h10" />
+        <path d="M10 19h4" />
+      </symbol>
+      <symbol id="icon-car" viewBox="0 0 24 24">
+        <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9L18.7 6c-.3-.6-.9-1-1.6-1H6.9c-.7 0-1.3.4-1.6 1l-1.8 5.1C2.7 11.3 2 12.1 2 13v3c0 .6.4 1 1 1h2" />
+        <circle cx="7" cy="17" r="2" />
+        <path d="M9 17h6" />
+        <circle cx="17" cy="17" r="2" />
+        <path d="M5 11h14" />
+      </symbol>
+      <symbol id="icon-person" viewBox="0 0 24 24">
+        <circle cx="12" cy="5" r="2" />
+        <path d="m12 7-2 5-4 2" />
+        <path d="m12 7 3 4 3 1" />
+        <path d="m10 12 4 3-1 6" />
+        <path d="m10 12-2 9" />
+      </symbol>
+      <symbol id="icon-user-plus" viewBox="0 0 24 24">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M19 8v6" />
+        <path d="M22 11h-6" />
+      </symbol>
+      <symbol id="icon-users" viewBox="0 0 24 24">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </symbol>
+      <symbol id="icon-log-in" viewBox="0 0 24 24">
+        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+        <path d="m10 17 5-5-5-5" />
+        <path d="M15 12H3" />
+      </symbol>
+      <symbol id="icon-door-access" viewBox="0 0 24 24">
+        <path d="M6 21V5.5A2.5 2.5 0 0 1 8.5 3H18v18" />
+        <path d="M10 21V7h8" />
+        <path d="M14 13h.01" />
+        <path d="M4 21h17" />
+      </symbol>
+      <symbol id="icon-map-pin" viewBox="0 0 24 24">
+        <path d="M20 10c0 4.9-8 12-8 12S4 14.9 4 10a8 8 0 1 1 16 0Z" />
+        <circle cx="12" cy="10" r="3" />
+      </symbol>
+      <symbol id="icon-home" viewBox="0 0 24 24">
+        <path d="m3 11 9-8 9 8" />
+        <path d="M5 10v10h14V10" />
+        <path d="M9 20v-6h6v6" />
+      </symbol>
+      <symbol id="icon-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="icon-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="icon-chevron-right" viewBox="0 0 24 24">
+        <path d="m9 18 6-6-6-6" />
+      </symbol>
+      <symbol id="icon-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="icon-camera" viewBox="0 0 24 24">
+        <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" />
+        <circle cx="12" cy="13" r="3" />
+      </symbol>
+      <symbol id="icon-sliders" viewBox="0 0 24 24">
+        <path d="M4 21v-7" />
+        <path d="M4 10V3" />
+        <path d="M12 21v-9" />
+        <path d="M12 8V3" />
+        <path d="M20 21v-5" />
+        <path d="M20 12V3" />
+        <path d="M2 14h4" />
+        <path d="M10 8h4" />
+        <path d="M18 16h4" />
+      </symbol>
+      <symbol id="icon-refresh" viewBox="0 0 24 24">
+        <path d="M21 12a9 9 0 0 1-15.5 6.2" />
+        <path d="M3 12A9 9 0 0 1 18.5 5.8" />
+        <path d="M18 2v4h4" />
+        <path d="M6 22v-4H2" />
+      </symbol>
+      <symbol id="icon-eye" viewBox="0 0 24 24">
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="icon-eye-off" viewBox="0 0 24 24">
+        <path d="m3 3 18 18" />
+        <path d="M10.6 10.6A3 3 0 0 0 13.4 13.4" />
+        <path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a17.7 17.7 0 0 1-2.1 3.1" />
+        <path d="M6.6 6.6C3.6 8.6 2 12 2 12s3.5 7 10 7a10.6 10.6 0 0 0 4.1-.8" />
+      </symbol>
+    </svg>
+    <div class="app-loader" id="appLoader" aria-label="Cargando" aria-live="polite">
+      <span></span>
+      <span></span>
+      <span></span>
+    </div>
+    <div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="false"></div>
+
+    <main class="login-screen" id="loginScreen">
+      <section class="login-card" aria-labelledby="loginTitle">
+        <div class="login-card-glow" aria-hidden="true"></div>
+        <div class="login-product">
+          <div>
+            <strong>EOLO Access Bridge</strong>
+            <span>v0.2.3</span>
+          </div>
+        </div>
+        <div class="login-signal-grid" id="loginSignalGrid" aria-label="Estado de servicios">
+          <span id="loginCloudSignal" class="unknown"><i></i><b data-login-signal-text>EOLO Cloud</b></span>
+          <span id="loginBridgeSignal" class="unknown"><i></i><b data-login-signal-text>Bridge local</b></span>
+          <span id="loginAnprSignal" class="unknown"><i></i><b data-login-signal-text>ANPR</b></span>
+        </div>
+        <h1 id="loginTitle">Iniciar Sesión</h1>
+        <form class="login-form" id="loginForm">
+          <label>
+            Número de Teléfono
+            <input name="phone" inputmode="tel" autocomplete="tel" placeholder="(___) ___-____" required />
+          </label>
+          <label id="pinField">
+            PIN de 4 dígitos
+            <div class="pin-segmented" data-pin-ui>
+              <input name="pin" class="pin-input" inputmode="numeric" autocomplete="one-time-code" maxlength="4" aria-label="PIN de 4 dígitos" />
+              <span data-pin-segment></span>
+              <span data-pin-segment></span>
+              <span data-pin-segment></span>
+              <span data-pin-segment></span>
+            </div>
+          </label>
+          <button class="primary wide login-submit" type="submit" id="loginSubmitBtn">
+            <span class="login-submit-label">Iniciar Sesión</span>
+            <span class="login-submit-loader" aria-hidden="true"><i></i><i></i><i></i></span>
+          </button>
+          <p class="form-message" id="loginMessage"></p>
+        </form>
+      </section>
+    </main>
+
+    <main class="operator-shell hidden" id="operatorShell">
+      <aside class="operator-sidebar">
+        <div class="operator-brand">
+          <div class="brand-identity">
+            <img class="access-logo hidden" id="activeAccessLogo" alt="" />
+            <span class="brand-mark" id="activeAccessLogoFallback"><svg class="ui-icon" aria-hidden="true"><use href="#icon-home"></use></svg></span>
+            <div>
+              <small>Acceso</small>
+              <strong id="companyName">Selecciona acceso</strong>
+            </div>
+          </div>
+        </div>
+        <nav class="operator-nav" aria-label="Operador">
+          <button class="access-select active" type="button" id="activeAccessBtn">
+            <span class="pin-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-home"></use></svg></span>
+            <span>
+              <small>Acceso activo</small>
+              <strong id="activeAccessName">Selecciona acceso</strong>
+              <em id="activeAccessHint">Elegir acceso</em>
+            </span>
+          </button>
+          <button class="control-point-select" type="button" id="activeControlPointBtn" disabled>
+            <span class="pin-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg></span>
+            <span>
+              <strong id="activeControlPointName">Selecciona punto de control</strong>
+              <small id="activeControlPointMeta">Obligatorio</small>
+              <em id="activeControlPointHint">Elegir punto</em>
+            </span>
+          </button>
+          <button class="nav-row active" type="button" data-view="movements">
+            <span>↪</span>
+            <strong>Movimientos</strong>
+          </button>
+          <button class="nav-row" type="button" data-view="stats">
+            <span>⌁</span>
+            <strong>Estadísticas</strong>
+          </button>
+        </nav>
+        <div class="access-list" id="accessList"></div>
+        <button class="collapse-button" type="button" id="sidebarToggle" aria-label="Colapsar sidebar">‹</button>
+      </aside>
+
+      <section class="operator-main">
+        <section class="access-picker-view" id="accessPickerView">
+          <header class="operator-topbar">
+            <div>
+            <h2>Accesos</h2>
+            <h1>Selecciona un Acceso</h1>
+            </div>
+            <div class="operator-actions">
+              <span class="sync-state" id="accessSourceState">Consultando EOLO</span>
+              <button class="ghost" type="button" id="refreshAccessesBtn">Actualizar</button>
+              <div class="profile-menu" data-profile-menu>
+                <button class="avatar profile-trigger" type="button" aria-label="Perfil de usuario" data-profile-trigger>
+                  <img class="user-avatar-img hidden" alt="" />
+                </button>
+                <div class="profile-dropdown">
+                  <strong class="profile-name">Operador EOLO</strong>
+                  <span class="profile-phone"></span>
+                  <button class="ghost" type="button" data-menu-settings>Ajustes</button>
+                  <button class="ghost" type="button" data-menu-sync>Sincronizar</button>
+                  <button class="ghost" type="button" data-logout>Cerrar sesión</button>
+                </div>
+              </div>
+            </div>
+          </header>
+          <section class="access-picker-grid" id="accessPickerGrid"></section>
+          <div class="empty-state access-empty" id="accessEmptyState" hidden>
+            No hay accesos autorizados para este usuario.
+          </div>
+        </section>
+
+        <section class="control-point-picker-view hidden" id="controlPointPickerView">
+          <header class="operator-topbar">
+            <div>
+              <h2>Puntos de Control</h2>
+              <h1>Mis Puntos de Control</h1>
+            </div>
+            <div class="operator-actions">
+              <span class="sync-state" id="controlPointSourceState">Consultando EOLO</span>
+              <button class="ghost" type="button" id="backToAccessesBtn">Cambiar acceso</button>
+              <button class="ghost" type="button" id="refreshControlPointsBtn">Actualizar</button>
+              <div class="profile-menu" data-profile-menu>
+                <button class="avatar profile-trigger" type="button" aria-label="Perfil de usuario" data-profile-trigger>
+                  <img class="user-avatar-img hidden" alt="" />
+                </button>
+                <div class="profile-dropdown">
+                  <strong class="profile-name">Operador EOLO</strong>
+                  <span class="profile-phone"></span>
+                  <button class="ghost" type="button" data-menu-settings>Ajustes</button>
+                  <button class="ghost" type="button" data-menu-sync>Sincronizar</button>
+                  <button class="ghost" type="button" data-logout>Cerrar sesión</button>
+                </div>
+              </div>
+            </div>
+          </header>
+          <section class="access-context">
+            <span>Acceso seleccionado</span>
+            <strong id="controlPointAccessName">Selecciona acceso</strong>
+          </section>
+          <section class="control-point-grid" id="controlPointPickerGrid"></section>
+          <div class="empty-state access-empty" id="controlPointEmptyState" hidden>
+            No hay puntos de control autorizados para este acceso.
+          </div>
+        </section>
+
+        <section class="movements-view hidden" id="movementsView">
+        <header class="operator-topbar">
+          <div>
+            <h2>Cámaras</h2>
+            <h1>Movimientos</h1>
+          </div>
+          <div class="operator-actions">
+            <span class="cloud-sync-status" id="cloudSyncStatus" title="Validando EOLO Cloud">
+              <span class="cloud-dot unknown" id="cloudStatusDot" aria-hidden="true"></span>
+              <button class="sync-state subtle-sync sync-text-button" type="button" id="syncState">Ult. Sinc. --</button>
+            </span>
+            <div class="profile-menu" data-profile-menu>
+              <button class="avatar profile-trigger" type="button" aria-label="Perfil de usuario" data-profile-trigger>
+                <img class="user-avatar-img hidden" alt="" />
+              </button>
+              <div class="profile-dropdown">
+                <strong class="profile-name">Operador EOLO</strong>
+                <span class="profile-phone"></span>
+                <button class="ghost" type="button" data-menu-settings>Ajustes</button>
+                <button class="ghost" type="button" data-menu-sync>Sincronizar</button>
+                <button class="ghost" type="button" data-logout>Cerrar sesión</button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section class="movement-toolbar">
+          <div class="date-line">
+            <svg class="ui-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>
+            <strong id="dateLabel">Hoy</strong>
+            <span>12:00 am - 11:59 pm</span>
+          </div>
+          <div class="period-tabs" role="tablist" aria-label="Periodo">
+            <button class="period active" type="button" data-period="today">Hoy</button>
+            <button class="period" type="button" data-period="week">Esta Semana</button>
+            <button class="period" type="button" data-period="month">Este Mes</button>
+            <button class="period" type="button" data-period="custom">▣ Otro Periodo</button>
+          </div>
+          <button class="primary" type="button" id="newMovementBtn"><svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg>Nuevo Registro</button>
+        </section>
+
+        <section class="stream-camera-panel" id="streamCameraPanel">
+          <header>
+            <div>
+              <h2>Cámaras RTSP</h2>
+              <span id="streamCameraSummary">Consultando cámaras...</span>
+            </div>
+            <div class="stream-header-actions">
+              <div class="stream-camera-tools global">
+                <button class="icon-button stream-tools-toggle" type="button" aria-label="Ocultar controles y logs ANPR" aria-expanded="true" title="Mostrar u ocultar controles">
+                  <svg class="ui-icon eye-on" aria-hidden="true"><use href="#icon-eye"></use></svg>
+                  <svg class="ui-icon eye-off" aria-hidden="true"><use href="#icon-eye-off"></use></svg>
+                </button>
+                <div class="stream-camera-inline-controls">
+                  <label class="ionic-toggle-control compact">
+                    <input class="stream-preview-toggle" type="checkbox" />
+                    <span class="ionic-toggle-track" aria-hidden="true"><span></span></span>
+                    <span>Visualizador</span>
+                  </label>
+                  <label class="ionic-toggle-control compact">
+                    <input class="anpr-log-toggle" type="checkbox" />
+                    <span class="ionic-toggle-track" aria-hidden="true"><span></span></span>
+                    <span>Logs</span>
+                  </label>
+                  <label class="stream-height-control compact">
+                    <span>Alto</span>
+                    <input class="stream-frame-height-range" type="range" min="180" max="560" step="20" />
+                    <b class="stream-frame-height-value">260px</b>
+                  </label>
+                </div>
+              </div>
+              <button class="icon-button stream-collapse-button" type="button" id="streamCameraCollapseBtn" aria-label="Ocultar visualizador de cámaras" aria-expanded="true">
+                <svg class="ui-icon chevron-down" aria-hidden="true"><use href="#icon-chevron-down"></use></svg>
+                <svg class="ui-icon chevron-right" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+              </button>
+            </div>
+          </header>
+          <div class="stream-camera-grid" id="streamCameraGrid"></div>
+        </section>
+
+        <section class="inventory-grid">
+          <article class="inventory-card">
+            <span class="inventory-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-car"></use></svg></span>
+            <div>
+              <span>Inventario <b id="vehicleVisitsBadge">0 Visitas</b></span>
+              <strong id="vehicleInventory">0</strong>
+            </div>
+          </article>
+          <article class="inventory-card">
+            <span class="inventory-icon pedestrian"><svg class="ui-icon" aria-hidden="true"><use href="#icon-person"></use></svg></span>
+            <div>
+              <span>Inventario <b id="pedestrianVisitsBadge">0 Visitas</b></span>
+              <strong id="pedestrianInventory">0</strong>
+            </div>
+          </article>
+        </section>
+
+        <section class="pending-sync-panel hidden" id="pendingSyncPanel">
+          <header>
+            <div>
+              <h2>Movimientos por sincronizar</h2>
+              <span id="pendingSyncSummary">Sin pendientes.</span>
+            </div>
+            <button class="ghost" type="button" id="syncPendingNowBtn">Intentar ahora</button>
+          </header>
+          <div class="pending-sync-list" id="pendingSyncList"></div>
+        </section>
+
+        <section class="filters-grid">
+          <div class="search-box" id="movementSearchBox">
+            <span><svg class="ui-icon" aria-hidden="true"><use href="#icon-search"></use></svg></span>
+            <input id="movementSearch" placeholder="Buscar" />
+            <button class="clear-filter-button hidden" type="button" id="clearMovementSearchBtn" aria-label="Limpiar búsqueda">
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+            </button>
+          </div>
+          <div class="search-box" id="statusFilterBox">
+            <span><svg class="ui-icon" aria-hidden="true"><use href="#icon-filter"></use></svg></span>
+            <select id="statusFilter">
+              <option value="">Filtros</option>
+              <option value="Ingresado">Ingresado</option>
+              <option value="Egresado">Egresado</option>
+              <option value="Solicitado">Solicitado</option>
+            </select>
+            <button class="clear-filter-button hidden" type="button" id="clearStatusFilterBtn" aria-label="Limpiar filtros">
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+            </button>
+          </div>
+        </section>
+
+        <section class="table-card">
+          <table>
+            <thead>
+              <tr>
+                <th>Nombre y Folio</th>
+                <th>Ingreso</th>
+                <th>Tipo</th>
+                <th>Placa</th>
+                <th>Notas</th>
+                <th>Visita a</th>
+                <th>Area</th>
+                <th>Estatus</th>
+                <th>Egreso</th>
+              </tr>
+            </thead>
+            <tbody id="movementRows"></tbody>
+          </table>
+          <div class="empty-state" id="emptyState" hidden>Sin movimientos para mostrar.</div>
+        </section>
+        <nav class="movement-pagination" aria-label="Paginación de movimientos">
+          <span><b id="movementPaginationInfo">Mostrando 0 de 0</b><small>Últimos 30 días</small></span>
+          <div>
+            <button class="ghost" type="button" id="prevMovementsPageBtn">Anterior</button>
+            <button class="ghost" type="button" id="nextMovementsPageBtn">Siguiente</button>
+          </div>
+        </nav>
+        </section>
+
+        <section class="settings-view hidden" id="settingsView">
+          <header class="operator-topbar">
+            <div>
+              <h2>Instancia Local</h2>
+              <h1>Ajustes</h1>
+            </div>
+            <div class="operator-actions">
+              <span class="sync-state" id="cameraState">Sin consultar</span>
+              <div class="profile-menu" data-profile-menu>
+                <button class="avatar profile-trigger" type="button" aria-label="Perfil de usuario" data-profile-trigger>
+                  <img class="user-avatar-img hidden" alt="" />
+                </button>
+                <div class="profile-dropdown">
+                  <strong class="profile-name">Operador EOLO</strong>
+                  <span class="profile-phone"></span>
+                  <button class="ghost" type="button" data-menu-settings>Ajustes</button>
+                  <button class="ghost" type="button" data-menu-sync>Sincronizar</button>
+                  <button class="ghost" type="button" data-logout>Cerrar sesión</button>
+                </div>
+              </div>
+            </div>
+          </header>
+          <nav class="settings-tabs" aria-label="Ajustes">
+            <button class="active" type="button" data-operator-settings-tab="camera">Cámara</button>
+            <button type="button" data-operator-settings-tab="cloud">EOLO Cloud</button>
+            <button type="button" data-operator-settings-tab="vision">Identificación</button>
+          </nav>
+          <section class="settings-grid">
+            <article class="settings-card" data-settings-section="camera">
+              <h3>Cámara de identificación</h3>
+              <label>
+                Fuente
+                <select id="cameraSelect"></select>
+              </label>
+              <div class="camera-preview">
+                <video id="settingsCameraPreview" autoplay playsinline muted></video>
+                <span id="settingsCameraEmpty">Selecciona una cámara para probarla.</span>
+              </div>
+              <div class="settings-actions">
+                <button class="ghost" type="button" id="refreshCamerasBtn">Actualizar cámaras</button>
+                <button class="ghost" type="button" id="testCameraBtn">Probar</button>
+                <button class="ghost" type="button" id="stopSettingsCameraBtn">Detener</button>
+              </div>
+            </article>
+            <article class="settings-card" data-settings-section="camera">
+              <h3>Uso en movimientos</h3>
+              <dl class="detail-list">
+                <dt>Cámara seleccionada</dt>
+                <dd id="selectedCameraLabel">Sin seleccionar</dd>
+                <dt>Captura</dt>
+                <dd>Disponible al crear un acceso movimiento desde Identificación.</dd>
+              </dl>
+            </article>
+            <article class="settings-card" data-settings-section="cloud" hidden>
+              <h3>EOLO Cloud técnico</h3>
+              <label>
+                Rama Bubble
+                <select id="cloudBranchPreset">
+                  <option value="live">Producción</option>
+                  <option value="test">version-test</option>
+                  <option value="13i8l">bridge-dev</option>
+                  <option value="73hi5">acc-upd</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </label>
+              <label id="cloudBranchCustomLabel" hidden>
+                Rama custom
+                <input id="cloudBranchCustom" placeholder="Test" autocomplete="off" />
+              </label>
+              <label>
+                URL base
+                <input id="cloudBaseUrl" placeholder="https://eolo.app" autocomplete="off" />
+              </label>
+              <label class="ionic-toggle-control settings-toggle">
+                <input id="cloudDeviceHeartbeatEnabled" type="checkbox" />
+                <span class="ionic-toggle-track" aria-hidden="true"><span></span></span>
+                Monitorear este cliente en Bubble
+              </label>
+              <label>
+                Identificador fijo
+                <input id="cloudDeviceId" placeholder="caseta-periferico-01" autocomplete="off" />
+              </label>
+              <label>
+                Workflow heartbeat
+                <input id="cloudDeviceHeartbeatEndpoint" placeholder="bridge_operator_device_heartbeat" autocomplete="off" readonly />
+              </label>
+              <label>
+                Data type Bubble
+                <input id="cloudDeviceDataType" placeholder="dispositivosacceso" autocomplete="off" readonly />
+              </label>
+              <div class="credential-panel compact">
+                <div>
+                  <strong>Workflow efectivo</strong>
+                  <span id="cloudWorkflowUrl">Sin consultar</span>
+                </div>
+                <div>
+                  <strong>Heartbeat efectivo</strong>
+                  <span id="cloudHeartbeatWorkflowUrl">Sin consultar</span>
+                </div>
+                <div>
+                  <strong>Identificador efectivo</strong>
+                  <span id="cloudEffectiveDeviceId">Sin consultar</span>
+                </div>
+              </div>
+              <div class="settings-actions">
+                <button class="primary" type="button" id="saveCloudConfigBtn">Guardar</button>
+              </div>
+              <p class="form-message" id="cloudConfigMessage"></p>
+            </article>
+            <article class="settings-card" data-settings-section="vision" hidden>
+              <h3>Lectura de identificación</h3>
+              <label class="ionic-toggle-control settings-toggle">
+                <input id="visionEnabled" type="checkbox" />
+                <span class="ionic-toggle-track" aria-hidden="true"><span></span></span>
+                OpenAI Vision
+              </label>
+              <label>
+                Modelo
+                <input id="visionModel" placeholder="gpt-4o-mini" />
+              </label>
+              <div class="credential-panel">
+                <div>
+                  <strong>API key OpenAI</strong>
+                  <span id="visionKeyHint">No hay API key guardada.</span>
+                </div>
+                <label class="ionic-toggle-control settings-toggle credential-toggle">
+                  <input id="changeVisionKey" type="checkbox" />
+                  <span class="ionic-toggle-track" aria-hidden="true"><span></span></span>
+                  Cambiar API key guardada
+                </label>
+              </div>
+              <label>
+                Nueva API key
+                <input id="visionApiKey" type="password" autocomplete="off" placeholder="Activa cambiar API key para editar" />
+              </label>
+              <div class="settings-actions">
+                <button class="primary" type="button" id="saveVisionConfigBtn">Guardar</button>
+              </div>
+              <p class="form-message" id="visionConfigMessage"></p>
+            </article>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <dialog class="control-point-dialog" id="controlPointDialog">
+      <section class="control-point-modal">
+        <header class="modal-titlebar">
+          <div>
+            <h2>Selecciona un Punto de Control</h2>
+            <span id="controlPointDialogMeta">Selecciona el punto de control donde te encuentras</span>
+          </div>
+          <button class="icon-button" type="button" id="closeControlPointDialogBtn" aria-label="Cerrar">×</button>
+        </header>
+        <section class="control-point-grid compact" id="controlPointDialogGrid"></section>
+      </section>
+    </dialog>
+
+    <dialog class="movement-dialog" id="movementDialog">
+      <form class="movement-modal" id="movementForm">
+        <header class="modal-titlebar">
+          <div>
+            <h2 id="movementModalTitle">Solicitud de Acceso</h2>
+            <span id="movementModalMeta"></span>
+          </div>
+          <span class="status-pill modal-status hidden" id="movementStatusChip"></span>
+          <button class="icon-button" type="button" data-close-dialog aria-label="Cerrar">×</button>
+        </header>
+
+        <div class="movement-modal-body">
+          <section class="movement-editor">
+            <div class="segmented movement-kind">
+                <button class="segment active" type="button" data-kind="Vehiculo">Vehículo</button>
+                <button class="segment" type="button" data-kind="Peaton">Peatón</button>
+            </div>
+
+            <div class="movement-summary-strip" id="movementSummaryStrip">
+              <article>
+                <span>Entrada</span>
+                <strong id="movementEntrySummary">N/A</strong>
+              </article>
+              <article>
+                <span>Salida</span>
+                <strong id="movementExitSummary">N/A</strong>
+              </article>
+              <article>
+                <span>Tipo</span>
+                <strong id="movementKindSummary">Vehículo</strong>
+              </article>
+            </div>
+
+            <div class="form-grid two primary-fields" id="vehiclePrimaryFields">
+              <label>
+                <span class="field-label">Placas<span>*</span></span>
+                <input name="placa" placeholder="Placas" autocomplete="off" autocapitalize="characters" spellcheck="false" pattern="[A-Za-z0-9]*" />
+              </label>
+              <label>
+                <span class="field-label neutral"><span id="vehicleAuxIdentifierLabel">Número Económico</span> <b class="registered-badge hidden" id="vehicleRegisteredBadge">Vehículo Registrado</b></span>
+                <input name="economic_number" placeholder="N. Económico Vehículo" />
+              </label>
+            </div>
+
+            <section class="vehicle-details collapsed" id="vehicleDetails">
+              <button class="vehicle-details-heading" id="vehicleDetailsToggle" type="button" aria-expanded="false">
+                <span>Detalles de vehículo</span>
+                <small id="vehicleDetailsState">Opcional</small>
+              </button>
+              <div class="vehicle-details-body">
+                <div class="form-grid two">
+                  <label>
+                    Tipo de Vehículo
+                    <select name="vehicle_type">
+                      <option>Automovil</option>
+                      <option>Camioneta</option>
+                      <option>Camion</option>
+                      <option>Motocicleta</option>
+                    </select>
+                  </label>
+                  <label>
+                    Categoría de Vehículo
+                    <select name="vehicle_category">
+                      <option>Sedan</option>
+                      <option>Pickup</option>
+                      <option>Carga</option>
+                      <option>Moto</option>
+                    </select>
+                  </label>
+                  <label>
+                    Año
+                    <input name="vehicle_year" placeholder="Año" />
+                  </label>
+                  <label>
+                    Color
+                    <input name="color" placeholder="Color" />
+                  </label>
+                  <label>
+                    Marca
+                    <input name="brand" placeholder="Marca" />
+                  </label>
+                  <label>
+                    Modelo
+                    <input name="model" placeholder="Modelo" />
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            <div class="motivo-row">
+              <span>Motivo de Ingreso</span>
+              <div class="segmented">
+                <button class="segment active" type="button" data-movement-type="Visita">Visita</button>
+                <button class="segment" type="button" data-movement-type="Servicio">Servicio</button>
+              </div>
+            </div>
+
+            <div class="form-grid two">
+              <label>
+                Teléfono
+                <input name="telefono" inputmode="tel" placeholder="Teléfono" />
+              </label>
+              <label>
+                Notas
+                <input name="notes" placeholder="Nota" />
+              </label>
+            </div>
+
+            <label>
+              <span class="field-label">Nombre Completo Visitante<span>*</span></span>
+              <div class="input-action-row">
+                <input name="visitor_name" id="visitorNameInput" placeholder="Nombre" required />
+                <button class="input-icon-button driver-overlay-button hidden" type="button" id="driverOverlayBtn" title="Conductores adicionales" aria-label="Conductores adicionales" aria-expanded="false">
+                  <svg class="ui-icon" aria-hidden="true"><use href="#icon-users"></use></svg>
+                  <b id="driverOverlayCount">0</b>
+                </button>
+                <button class="input-icon-button companion-add-button" type="button" id="addCompanionBtn" title="Agregar acompañante" aria-label="Agregar acompañante">
+                  <svg class="ui-icon" aria-hidden="true"><use href="#icon-user-plus"></use></svg>
+                </button>
+                <button class="input-icon-button" type="button" id="visitorIdCameraBtn" title="Tomar foto de identificación" aria-label="Tomar foto de identificación">
+                  <svg class="ui-icon" aria-hidden="true"><use href="#icon-camera"></use></svg>
+                </button>
+              </div>
+              <input name="vehicle_id" id="vehicleId" type="hidden" />
+              <input name="driver_id" id="driverId" type="hidden" />
+              <input name="driver_mode" id="driverMode" type="hidden" value="" />
+            </label>
+            <p class="visitor-lookup-state" id="visitorLookupState"></p>
+            <div class="resident-auto-card hidden" id="residentAutoCard">
+              <div>
+                <span class="registered-badge">Residente Registrado</span>
+                <strong id="residentAutoName">Residente</strong>
+                <small id="residentAutoMeta"></small>
+              </div>
+              <button class="input-icon-button" type="button" id="clearAutoResidentBtn" title="Cambiar visitante" aria-label="Cambiar visitante">
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+              </button>
+            </div>
+            <div class="driver-overlay" id="driverOverlay"></div>
+
+            <section class="companions-panel" id="companionsPanel">
+              <span class="sr-only" id="companionsSummary">Sin acompañantes</span>
+              <div class="companions-list" id="companionsList"></div>
+            </section>
+
+            <div class="field-block resident-field">
+              <span class="field-label">A Quien Visita<span>*</span></span>
+              <div class="resident-control">
+                <input name="resident_search" id="residentSearch" autocomplete="off" placeholder="Buscar por nombre, teléfono o área" required />
+                <button class="ghost compact hidden" type="button" id="changeResidentBtn">Cambiar</button>
+              </div>
+              <input name="resident_id" id="residentId" type="hidden" required />
+              <input name="visit_to" type="hidden" />
+              <div class="resident-list" id="residentList"></div>
+            </div>
+            <input name="area" type="hidden" />
+
+            <footer class="modal-actions">
+              <button class="ghost" type="button" data-close-dialog>Cancelar</button>
+              <button class="danger hidden" type="button" id="egressBtn">Egresar</button>
+              <button class="primary" type="submit" id="saveMovementBtn">Ingresar</button>
+            </footer>
+            <p class="form-message" id="movementMessage"></p>
+          </section>
+
+          <aside class="movement-side">
+            <section class="history-card">
+              <h3>◷ Historial de Movimientos</h3>
+              <ol id="movementHistory"></ol>
+            </section>
+            <section class="asset-card">
+              <div class="asset-card-titlebar">
+                <h3>Vehículo</h3>
+                <div class="asset-tabs" id="vehiclePhotoTabs">
+                  <button type="button" class="active" data-vehicle-photo-view="entry">Entrada</button>
+                  <button type="button" data-vehicle-photo-view="exit">Salida</button>
+                </div>
+              </div>
+              <div class="vehicle-photo-panel">
+                <div class="asset-placeholder" id="vehicleImageSlot">Sin Imagen</div>
+                <div class="asset-actions" id="vehiclePhotoActions">
+                  <button class="ghost" type="button" id="changeVehiclePhotoFromCameraBtn">Cambiar desde cámara</button>
+                  <button class="danger hidden" type="button" id="removeVehiclePhotoBtn">Eliminar</button>
+                </div>
+              </div>
+              <input name="vehicle_photo_data_url" id="vehiclePhotoDataUrl" type="hidden" />
+              <input name="vehicle_exit_photo_data_url" id="vehicleExitPhotoDataUrl" type="hidden" />
+            </section>
+            <section class="asset-card">
+              <h3>Identificación</h3>
+              <div class="id-capture-panel">
+                <div class="asset-placeholder compact" id="idImageSlot">Sin Imagen</div>
+                <div class="asset-actions" id="idCaptureActions">
+                  <button class="ghost" type="button" id="openIdCameraBtn">Tomar foto</button>
+                  <button class="ghost hidden" type="button" id="retakeIdPhotoBtn">Cambiar</button>
+                  <button class="danger hidden" type="button" id="removeIdPhotoBtn">Eliminar</button>
+                </div>
+                <p class="id-vision-state" id="idVisionState"></p>
+              </div>
+              <input name="id_photo_data_url" id="idPhotoDataUrl" type="hidden" />
+              <input name="id_photo_url" id="idPhotoUrl" type="hidden" />
+            </section>
+          </aside>
+        </div>
+        <div class="movement-busy-overlay hidden" id="movementBusyOverlay" aria-live="polite" aria-atomic="true">
+          <section>
+            <div class="busy-dots"><span></span><span></span><span></span></div>
+            <strong id="movementBusyTitle">Sincronizando con EOLO Cloud</strong>
+            <p>Espere un momento.</p>
+          </section>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="id-camera-dialog" id="idCameraDialog">
+      <section class="id-camera-modal">
+        <h2>Coloca la identificación en el recuadro</h2>
+        <div class="id-camera-stage">
+          <video id="idCameraVideo" autoplay playsinline muted></video>
+          <div class="id-guide-frame" id="idGuideFrame" aria-hidden="true"></div>
+          <canvas id="idCameraCanvas" class="hidden"></canvas>
+        </div>
+        <p>Asegure que la imagen tomada se vea clara y nítida</p>
+        <div class="id-camera-actions">
+          <button class="ghost" type="button" id="cancelIdCameraBtn">Cancelar</button>
+          <button class="primary" type="button" id="captureIdPhotoBtn">▣ Capturar</button>
+        </div>
+      </section>
+    </dialog>
+
+    <script src="/operator.js" type="module"></script>
+  </body>
+</html>

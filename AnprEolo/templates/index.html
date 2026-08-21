@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configurar Cámaras - EOLO</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+  <div class="container">
+    <h1>Configuración de Cámaras</h1>
+    <p class="subtitle">Sistema de gestión EOLO - Panel de administración</p>
+
+    <form method="POST">
+      <div class="card">
+        <h2>Servidor Webhook</h2>
+        <div class="form-group">
+          <label>Server URL</label>
+          <input type="text" name="server_url" value="{{server_url}}" placeholder="https://ejemplo.com">
+        </div>
+        <div class="form-group">
+          <label>ID Acceso (Bubble)</label>
+          <input type="text" name="id_acceso" value="{{id_acceso}}" placeholder="ID de acceso">
+        </div>
+        <hr>
+        <h3>Base de Datos de Placas</h3>
+        <p style="color: var(--text-secondary); margin: 0.5rem 0 1rem 0; font-size: 0.85rem;">Sincroniza la lista de placas permitidas desde el servidor central.</p>
+        <div id="sync-status" style="margin-bottom: 1rem; font-size: 0.9rem; display: none;"></div>
+        <div class="button-group">
+          <button type="button" id="btn-sync" class="btn-secondary" onclick="syncPlates()">Sincronizar Placas</button>
+          <a href="/placas" class="btn-secondary" style="text-decoration: none; display: flex; align-items: center; justify-content: center;">Ver Placas</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Cámaras RTSP <span class="status-badge">{{cameras|length}} activas</span></h2>
+        <table id="camera-table">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>RTSP URL</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for cam in cameras %}
+            <tr>
+              <td><input type="text" name="name_{{loop.index}}" value="{{cam.name}}"></td>
+              <td><input type="text" name="rtsp_{{loop.index}}" value="{{cam.rtsp}}" size="60"></td>
+              <td><button type="button" class="btn-danger" onclick="deleteRow(this)">✕ Eliminar</button></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <div class="button-group">
+          <button type="button" class="btn-secondary" onclick="addRow()">Agregar cámara</button>
+          <button type="submit" class="btn-primary">Guardar configuración</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Barreras ISAPI <span class="status-badge">{{barriers|length}} configuradas</span></h2>
+        <table id="barrier-table">
+          <thead>
+            <tr>
+              <th>ID Barra</th>
+              <th>Núm. Barra</th>
+              <th>IP:Puerto</th>
+              <th>Usuario</th>
+              <th>Contraseña</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for b in barriers %}
+            <tr>
+              <td><input type="text" name="b_id_{{loop.index}}" value="{{b.id_barra}}"></td>
+              <td><input type="text" name="b_num_{{loop.index}}" value="{{b.numero_barra}}"></td>
+              <td><input type="text" name="b_ip_{{loop.index}}" value="{{b.ip_puerto}}"></td>
+              <td><input type="text" name="b_user_{{loop.index}}" value="{{b.usuario}}"></td>
+              <td><input type="text" name="b_pass_{{loop.index}}" value="{{b.password}}"></td>
+              <td><button type="button" class="btn-danger" onclick="deleteRow(this)">✕ Eliminar</button></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <div class="button-group">
+          <button type="button" class="btn-secondary" onclick="addBarrierRow()">Agregar barrera</button>
+          <button type="submit" class="btn-primary">Guardar configuración</button>
+        </div>
+      </div>
+    </form>
+
+    <div class="card">
+      <h2>Control de Servicios</h2>
+      <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">Reinicia los servicios app.py y
+        RTSP para aplicar los cambios de configuración.</p>
+      <form method="POST" action="/restart" onsubmit="return confirm('¿Estás seguro de reiniciar los servicios?');">
+        <button type="submit" class="btn-primary"
+          style="background: linear-gradient(135deg, var(--success), #059669);">Reiniciar Servicios</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Logs en tiempo real (app.py)</h2>
+      <div id="logs-container">waiting for logs...</div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+
+</html>

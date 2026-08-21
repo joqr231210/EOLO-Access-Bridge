@@ -1,0 +1,211 @@
+{% extends "layout.html" %}
+
+{% block page_title %}Movimientos de Acceso{% endblock %}
+{% block page_subtitle %}Registro de entradas y salidas del sistema{% endblock %}
+
+{% block content %}
+<div class="tabs-container" style="margin-bottom: 2rem;">
+  <div class="tabs-header"
+    style="display: flex; gap: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+    <button class="tab-btn active" onclick="showTab('accesos')" id="tab-btn-accesos"
+      style="background: none; border: none; padding: 0.5rem 1rem; cursor: pointer; color: var(--text-primary); font-weight: 600; border-bottom: 2px solid var(--primary); transition: all 0.3s;">
+      <i class="ph ph-door-open"></i> Accesos
+    </button>
+  </div>
+</div>
+
+<div id="tab-accesos" class="tab-content active">
+  <div class="card">
+    <div class="card-header">
+      <h2><i class="ph ph-list-numbers"></i> Historial de Accesos</h2>
+      <span class="badge badge-primary">{{ accesos|length }} registros</span>
+    </div>
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Capturas (E/S)</th>
+            <th>Folio</th>
+            <th>Sinc.</th>
+            <th>Placa</th>
+            <th>Teléfono</th>
+            <th>Entrada</th>
+            <th>Salida</th>
+            <th>Cámaras (E/S)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for mov in accesos %}
+          <tr>
+            <td style="width: 180px; padding: 0.5rem;">
+              <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <!-- Entrada -->
+                <div style="text-align: center;">
+                  {% if mov.imagen %}
+                  <img src="{{ url_for('static', filename=mov.imagen) }}" alt="Entrada"
+                    style="width: 70px; height: 45px; object-fit: cover; border-radius: 4px; cursor: pointer; border: 1px solid var(--border-light);"
+                    onclick="openImageModal(this.src, 'Captura de Entrada')">
+                  <small style="display: block; font-size: 0.65rem; color: var(--success);"><i
+                      class="ph ph-sign-in"></i></small>
+                  {% else %}
+                  <div
+                    style="width: 70px; height: 45px; background: #eee; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 0.6rem; color: #999;">
+                    -
+                  </div>
+                  {% endif %}
+                </div>
+
+                <!-- Salida -->
+                <div style="text-align: center;">
+                  {% if mov.imagen_salida %}
+                  <img src="{{ url_for('static', filename=mov.imagen_salida) }}" alt="Salida"
+                    style="width: 70px; height: 45px; object-fit: cover; border-radius: 4px; cursor: pointer; border: 1px solid var(--border-light);"
+                    onclick="openImageModal(this.src, 'Captura de Salida')">
+                  <small style="display: block; font-size: 0.65rem; color: var(--danger);"><i
+                      class="ph ph-sign-out"></i></small>
+                  {% else %}
+                  <div
+                    style="width: 70px; height: 45px; background: #f8f8f8; border-radius: 4px; border: 1px dashed #ddd; display: flex; align-items: center; justify-content: center; font-size: 0.6rem; color: #bbb;">
+                    ...
+                  </div>
+                  {% endif %}
+                </div>
+              </div>
+            </td>
+            <td>
+              <span class="badge badge-secondary">
+                #{{ mov.prefijo or 'CAM' }}{{ mov.folio }}
+              </span>
+            </td>
+            <td style="text-align: center;">
+              {% if mov.sync %}
+              <div class="sync-indicator synced" title="Sincronizado: {{ mov.uid_bubble or 'OK' }}">
+                <i class="ph ph-cloud-check" style="font-size: 1.2rem; color: var(--success);"></i>
+              </div>
+              {% else %}
+              <div class="sync-indicator pending" title="Pendiente de sincronizar">
+                <i class="ph ph-cloud-arrow-up" style="font-size: 1.2rem; color: #aaa;"></i>
+              </div>
+              {% endif %}
+            </td>
+            <td><strong>{{ mov.placa }}</strong></td>
+            <td>{{ mov.telefono or '-' }}</td>
+            <td>{{ mov.fecha_entrada }}</td>
+            <td>
+              {% if mov.fecha_salida %}
+              {{ mov.fecha_salida }}
+              {% else %}
+              <span class="status-indicator active"
+                style="font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 10px;">
+                <div class="status-dot"></div> En sitio
+              </span>
+              {% endif %}
+            </td>
+            <td>
+              <div style="font-size: 0.85rem;">
+                <i class="ph ph-sign-in" style="color: var(--success);"></i> {{ mov.camara_entrada }}<br>
+                {% if mov.camara_salida %}
+                <i class="ph ph-sign-out" style="color: var(--danger);"></i> {{ mov.camara_salida }}
+                {% else %}
+                <i class="ph ph-sign-out" style="opacity: 0.3;"></i> <small style="opacity: 0.5;">Pendiente</small>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not accesos %}
+          <tr>
+            <td colspan="7" style="text-align: center; padding: 3rem;">
+              <i class="ph ph-info" style="font-size: 2rem; opacity: 0.3; display: block; margin-bottom: 1rem;"></i>
+              No hay movimientos registrados recientemente.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="image-modal" class="modal" onclick="this.style.display='none'"
+  style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.9); align-items: center; justify-content: center; flex-direction: column;">
+  <span
+    style="position: absolute; top: 20px; right: 35px; color: #f1f1f1; font-size: 40px; font-weight: bold; cursor: pointer;">&times;</span>
+  <h3 id="modal-title" style="color: white; margin-bottom: 1rem; font-weight: 500;">Captura</h3>
+  <img id="modal-img"
+    style="margin: auto; display: block; max-width: 90%; max-height: 80%; border-radius: 8px; box-shadow: 0 0 20px rgba(0,0,0,0.5);">
+</div>
+
+<style>
+  .tab-btn.active {
+    color: var(--primary) !important;
+    border-bottom: 2px solid var(--primary) !important;
+  }
+
+  .sync-indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: help;
+  }
+
+  .sync-indicator.pending i {
+    animation: pulse-sync 2s infinite;
+  }
+
+  @keyframes pulse-sync {
+    0% {
+      opacity: 0.4;
+    }
+
+    50% {
+      opacity: 1;
+    }
+
+    100% {
+      opacity: 0.4;
+    }
+  }
+
+  .modal {
+    display: none;
+    flex-direction: column;
+  }
+</style>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function showTab(tabName) {
+    // Ocultar todos los contenidos
+    document.querySelectorAll('.tab-content').forEach(tab => {
+      tab.style.display = 'none';
+    });
+
+    // Desactivar todos los botones
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.classList.remove('active');
+      btn.style.color = 'var(--text-secondary)';
+      btn.style.borderBottom = 'none';
+    });
+
+    // Mostrar el seleccionado
+    document.getElementById('tab-' + tabName).style.display = 'block';
+
+    // Activar el botón seleccionado
+    const activeBtn = document.getElementById('tab-btn-' + tabName);
+    activeBtn.classList.add('active');
+    activeBtn.style.color = 'var(--primary)';
+    activeBtn.style.borderBottom = '2px solid var(--primary)';
+  }
+
+  function openImageModal(src) {
+    const modal = document.getElementById('image-modal');
+    const modalImg = document.getElementById('modal-img');
+    modal.style.display = "flex";
+    modalImg.src = src;
+  }
+</script>
+{% endblock %}

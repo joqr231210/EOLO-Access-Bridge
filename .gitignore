@@ -1,21 +1,26 @@
 node_modules/
+.venv-anpr*/
 .env
-data/*.jsonl
+data/
 uploads/
 backups/
 work/
+release/
+dist/
+vendor/sidecars/
+fondo-login.jpg
 .DS_Store
 
 # Local runtime state and secrets
-data/device-config.json
-AnprEolo/
 AnprEolo/config.json
 AnprEolo/plates.db
 AnprEolo/static/captures/
+AnprEolo/dist/
+AnprEolo/build/
+AnprEolo/gui.spec
+AnprEolo/stream/config.json
+AnprEolo/stream/pinggy.bat
 
 # Heavy model/runtime artifacts
-AnprEolo/*.pt
-AnprEolo/*.onnx
 AnprEolo/__pycache__/
 AnprEolo/**/__pycache__/
-AnprEolo/stream/rtsptomse

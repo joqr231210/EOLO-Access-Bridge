@@ -1,0 +1,29 @@
+{
+  "server_url": "http://127.0.0.1:8090",
+  "cameras": [
+    {
+      "name": "DEMO_ENTRADA",
+      "rtsp": "rtsp://platerec:8S5AZ7YasGc3m4@video.platerecognizer.com:8554/demo",
+      "type": "Entrada",
+      "prefix": "ENT",
+      "barrier_ids": []
+    },
+    {
+      "name": "DEMO_SALIDA",
+      "rtsp": "rtsp://platerec:8S5AZ7YasGc3m4@video.platerecognizer.com:8554/demo",
+      "type": "Salida",
+      "prefix": "SAL",
+      "barrier_ids": []
+    }
+  ],
+  "barriers": [],
+  "id_acceso": "",
+  "id_estacionamiento": "",
+  "version": "live",
+  "bubble_token": "",
+  "min_plate_width_ratio": 0.001,
+  "min_plate_height_ratio": 0.001,
+  "strict_plate_validation": false,
+  "require_vehicle_detection": true,
+  "min_vehicle_confidence": 0.25
+}

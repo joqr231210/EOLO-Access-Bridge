@@ -36,6 +36,7 @@ const serviceTabs = [
   { id: 'anpr-processor', label: 'Procesador ANPR', title: 'Procesador ANPR' },
   { id: 'barriers', label: 'Barreras', title: 'Barreras' },
   { id: 'rtsp-preview', label: 'Visualizador Cámaras', title: 'Visualizador Cámaras' },
+  { id: 'webrtc-preview', label: 'WebRTC', title: 'Visualizador WebRTC' },
   { id: 'visit-sync', label: 'Visitas Sync', title: 'Visitas Sync' }
 ];
 
@@ -365,7 +366,7 @@ async function controlService(serviceId, action) {
     method: 'POST'
   });
   state.services = payload.services || [];
-  if (state.activeServiceTab === serviceId || serviceId.startsWith('anpr') || serviceId === 'barriers' || serviceId === 'visit-sync' || serviceId === 'rtsp-preview') {
+  if (state.activeServiceTab === serviceId || serviceId.startsWith('anpr') || serviceId === 'barriers' || serviceId === 'visit-sync' || serviceId === 'rtsp-preview' || serviceId === 'webrtc-preview') {
     const dashboardPayload = await api('/api/anpr/dashboard').catch((error) => {
       state.anprDashboardError = error.message;
       return state.anprDashboard;
@@ -489,6 +490,7 @@ function renderServiceDetail() {
     'anpr-processor': renderAnprProcessorServiceView,
     barriers: renderBarriersServiceView,
     'rtsp-preview': renderRtspPreviewServiceView,
+    'webrtc-preview': renderWebrtcPreviewServiceView,
     'visit-sync': renderVisitSyncServiceView
   };
   detail.innerHTML = `
@@ -807,6 +809,7 @@ function renderAnprApiServiceView() {
         ${renderDefinitionList([
           { label: 'Min. ancho placa', value: cfg.min_plate_width_ratio ?? '-' },
           { label: 'Min. alto placa', value: cfg.min_plate_height_ratio ?? '-' },
+          { label: 'Validacion estricta', value: cfg.strict_plate_validation !== false ? 'Si' : 'No' },
           { label: 'Requiere vehiculo', value: cfg.require_vehicle_detection ? 'Si' : 'No' },
           { label: 'Confianza vehiculo', value: cfg.min_vehicle_confidence ?? '-' }
         ])}
@@ -933,6 +936,10 @@ function renderAnprConfigForm(cfg = anprConfig()) {
           <input name="min_vehicle_confidence" type="number" min="0" max="1" step="0.01" value="${escapeHtml(cfg.min_vehicle_confidence ?? 0.78)}" />
         </label>
         <label class="toggle-field">
+          <input name="strict_plate_validation" type="checkbox" ${cfg.strict_plate_validation !== false ? 'checked' : ''} />
+          <span>Validación estricta de placa</span>
+        </label>
+        <label class="toggle-field">
           <input name="require_vehicle_detection" type="checkbox" ${cfg.require_vehicle_detection ? 'checked' : ''} />
           <span>Requiere vehículo detectado</span>
         </label>
@@ -967,23 +974,34 @@ function renderBarriersServiceView() {
 function renderRtspPreviewServiceView() {
   const hardware = anprHardware();
   const status = anprService('rtsp-preview');
+  const webrtcStatus = serviceById('webrtc-preview') || {};
   const cameraCount = (hardware.cameras || []).length || (anprConfig().cameras || []).length;
   return `
     ${renderAnprUnavailable()}
     ${state.anprHardwareError ? `<div class="service-warning">No se pudo cargar hardware editable: ${escapeHtml(state.anprHardwareError)}</div>` : ''}
     ${renderMetrics([
-      { label: 'Preview', value: status.running ? 'Activo' : 'Detenido' },
-      { label: 'PID', value: status.pid || '-' },
+      { label: 'WebRTC', value: webrtcStatus.running ? 'Activo' : 'Detenido' },
+      { label: 'MSE', value: status.running ? 'Activo' : 'Detenido' },
       { label: 'Camara(s)', value: cameraCount },
-      { label: 'Puerto interno', value: '8083' }
+      { label: 'Latencia', value: webrtcStatus.running ? 'Baja' : 'Fallback' }
     ])}
     <div class="service-section-grid">
       <section class="service-section">
-        <h4>Control RTSP</h4>
+        <h4>WebRTC recomendado</h4>
+        ${renderServiceActions('webrtc-preview')}
+        ${renderDefinitionList([
+          { label: 'Publicacion', value: webrtcStatus.publicUrl || 'http://localhost:1984' },
+          { label: 'ICE', value: webrtcStatus.port ? `TCP/UDP ${webrtcStatus.port}` : 'TCP/UDP 8555' },
+          { label: 'Uso', value: 'Reproductor principal del operador' }
+        ])}
+      </section>
+      <section class="service-section">
+        <h4>Fallback MSE</h4>
         ${renderServiceActions('rtsp-preview')}
         ${renderDefinitionList([
-          { label: 'Publicacion', value: 'Interna al contenedor ANPR' },
-          { label: 'Base', value: 'http://anpr-api:8083' }
+          { label: 'Publicacion', value: 'http://localhost:8083' },
+          { label: 'Puerto', value: '8083' },
+          { label: 'Uso', value: 'Compatibilidad si WebRTC no esta disponible' }
         ])}
       </section>
       <section class="service-section wide">
@@ -997,6 +1015,41 @@ function renderRtspPreviewServiceView() {
           hardware.cameras || [],
           'Sin cámaras disponibles para previsualizar.'
         )}
+      </section>
+    </div>
+  `;
+}
+
+function renderWebrtcPreviewServiceView() {
+  const hardware = anprHardware();
+  const status = serviceById('webrtc-preview') || {};
+  const cameraCount = (hardware.cameras || []).length || (anprConfig().cameras || []).length;
+  return `
+    ${renderAnprUnavailable()}
+    ${state.anprHardwareError ? `<div class="service-warning">No se pudo cargar hardware editable: ${escapeHtml(state.anprHardwareError)}</div>` : ''}
+    ${renderMetrics([
+      { label: 'WebRTC', value: status.running ? 'Activo' : 'Detenido' },
+      { label: 'PID', value: status.pid || '-' },
+      { label: 'Camara(s)', value: cameraCount },
+      { label: 'Puerto ICE', value: status.port || '8555' }
+    ])}
+    <div class="service-section-grid">
+      <section class="service-section">
+        <h4>Control WebRTC</h4>
+        ${renderServiceActions('webrtc-preview')}
+        ${renderDefinitionList([
+          { label: 'WebUI', value: status.publicUrl || 'http://localhost:1984' },
+          { label: 'API interna', value: status.apiUrl || 'http://127.0.0.1:1984' },
+          { label: 'Recomendacion', value: 'Usar H.264/substream para menor carga' }
+        ])}
+      </section>
+      <section class="service-section">
+        <h4>Puertos Docker</h4>
+        ${renderDefinitionList([
+          { label: 'HTTP', value: '1984/tcp' },
+          { label: 'ICE', value: '8555/tcp + 8555/udp' },
+          { label: 'LAN', value: 'ANPR_WEBRTC_ICE_HOST=IP del equipo Docker' }
+        ])}
       </section>
     </div>
   `;
@@ -1602,6 +1655,7 @@ function readAnprConfigForm(form) {
     min_plate_width_ratio: Number(data.min_plate_width_ratio || 0),
     min_plate_height_ratio: Number(data.min_plate_height_ratio || 0),
     min_vehicle_confidence: Number(data.min_vehicle_confidence || 0),
+    strict_plate_validation: Boolean(data.strict_plate_validation),
     require_vehicle_detection: Boolean(data.require_vehicle_detection)
   };
   const token = String(data.bubble_token || '').trim();

@@ -1,0 +1,120 @@
+{% extends "layout.html" %}
+
+{% block page_title %}Cámaras y Barreras{% endblock %}
+{% block page_subtitle %}Gestión de hardware de reconocimiento y acceso{% endblock %}
+
+{% block content %}
+<form method="POST" action="/hardware">
+  <div class="card">
+    <div class="card-header">
+      <h2><i class="ph ph-video-camera"></i> Cámaras (RTSP)</h2>
+      <span class="badge badge-primary">{{ cameras|length }} activas</span>
+    </div>
+
+    <div class="table-container">
+      <table id="camera-table">
+        <thead>
+          <tr>
+            <th>Nombre / Ubicación</th>
+            <th>RTSP URL</th>
+            <th>Tipo</th>
+            <th>Prefijo</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="camera-table-body">
+          {% for cam in cameras %}
+          <tr>
+            <td><input type="text" name="name_{{ loop.index }}" value="{{ cam.name }}" placeholder="Ej. Entrada Principal" required></td>
+            <td><input type="text" name="rtsp_{{ loop.index }}" value="{{ cam.rtsp }}" placeholder="rtsp://usuario:pass@ip:puerto/path" size="60" required></td>
+            <td>
+              <select name="type_{{ loop.index }}">
+                <option value="Entrada" {% if cam.type == 'Entrada' %}selected{% endif %}>Entrada</option>
+                <option value="Salida" {% if cam.type == 'Salida' %}selected{% endif %}>Salida</option>
+              </select>
+            </td>
+            <td><input type="text" name="prefix_{{ loop.index }}" value="{{ cam.prefix }}" maxlength="3" style="width: 60px; text-transform: uppercase;"></td>
+            <td>
+              <button type="button" class="btn btn-danger" onclick="deleteRow(this)">
+                <i class="ph ph-trash"></i> Eliminar
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="button-group">
+      <button type="button" class="btn btn-secondary" onclick="addRow()">
+        <i class="ph ph-plus-circle"></i> Agregar Cámara
+      </button>
+      <button type="submit" class="btn btn-primary" style="margin-left: auto;">
+        <i class="ph ph-floppy-disk"></i> Guardar Cambios
+      </button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2><i class="ph ph-boom-tube"></i> Barreras de Acceso (ISAPI)</h2>
+      <span class="badge badge-primary">{{ barriers|length }} configuradas</span>
+    </div>
+
+    <div class="table-container">
+      <table id="barrier-table">
+        <thead>
+          <tr>
+            <th>ID Barra (Unique)</th>
+            <th>Número Barra</th>
+            <th>IP y Puerto</th>
+            <th>Usuario</th>
+            <th>Contraseña</th>
+            <th>Cámara Vinculada</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in barriers %}
+          <tr>
+            <td><input type="text" name="b_id_{{ loop.index }}" value="{{ b.id_barra }}" required></td>
+            <td><input type="text" name="b_num_{{ loop.index }}" value="{{ b.numero_barra }}" required></td>
+            <td><input type="text" name="b_ip_{{ loop.index }}" value="{{ b.ip_puerto }}" required></td>
+            <td><input type="text" name="b_user_{{ loop.index }}" value="{{ b.usuario }}"></td>
+            <td><input type="password" name="b_pass_{{ loop.index }}" value="{{ b.password }}"></td>
+            <td>
+              <select name="b_cam_{{ loop.index }}">
+                <option value="">-- Ninguna --</option>
+                {% for cam in cameras %}
+                <option value="{{ cam.name }}" {% if b.camera_name == cam.name %}selected{% endif %}>{{ cam.name }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <button type="button" class="btn btn-danger" onclick="deleteRow(this)">
+                <i class="ph ph-trash"></i> Eliminar
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="button-group">
+      <button type="button" class="btn btn-secondary" onclick="addBarrierRow()">
+        <i class="ph ph-plus-circle"></i> Agregar Barrera
+      </button>
+      <button type="submit" class="btn btn-primary" style="margin-left: auto;">
+        <i class="ph ph-floppy-disk"></i> Guardar Hardware
+      </button>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const cameraNames = [{% for cam in cameras %}"{{ cam.name }}"{% if not loop.last %}, {% endif %}{% endfor %}];
+</script>
+{% endblock %}
