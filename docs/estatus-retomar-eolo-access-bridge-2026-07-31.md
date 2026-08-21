@@ -1533,3 +1533,18 @@ Notas de instalacion sin firma:
 - Para distribucion real conviene firmar:
   - Apple Developer ID + notarizacion para macOS;
   - certificado Authenticode para Windows.
+
+## Actualizacion 2026-08-21 - repositorio GitHub y branding
+
+Se preparo el proyecto para quedar versionado como `EOLO Access Bridge`:
+
+- Se actualizo el nombre tecnico del paquete de `eolo-hikvision-local` a `eolo-access-bridge`.
+- Se cambio el titulo visible del panel base a `EOLO Access Bridge`.
+- Se actualizo el log de arranque del servidor para referirse al servicio como `EOLO Access Bridge`.
+- Se conserva la palabra Hikvision solo donde describe integraciones tecnicas ISAPI/Face Recognition.
+- El repo local queda listo para publicarse en GitHub desde la rama `main`.
+
+Pendiente operativo:
+
+- Crear/publicar el repositorio remoto con GitHub CLI usando la cuenta autenticada.
+- Ejecutar validaciones de sintaxis despues del cambio de branding.

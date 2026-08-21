@@ -1,7 +1,7 @@
 {
-  "name": "eolo-hikvision-local",
+  "name": "eolo-access-bridge",
   "version": "0.2.3",
-  "description": "Servicio local EOLO para terminales Hikvision ISAPI.",
+  "description": "Bridge local EOLO para operar accesos, ANPR, camaras y terminales ISAPI.",
   "author": "EOLO",
   "type": "module",
   "main": "desktop/main.cjs",

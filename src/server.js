@@ -1557,7 +1557,7 @@ app.use((error, _req, res, _next) => {
 });
 
 const server = app.listen(config.port, () => {
-  log('info', `Servicio EOLO Hikvision escuchando en puerto ${config.port}`, {
+  log('info', `Servicio EOLO Access Bridge escuchando en puerto ${config.port}`, {
     mode: config.mockDevice ? 'mock' : 'device'
   }).catch(() => {});
   taskRunner.startPolling();
