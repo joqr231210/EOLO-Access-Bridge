@@ -84,6 +84,15 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+Windows limpio con Docker Desktop instalado:
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/joqr231210/EOLO-Access-Bridge/main/scripts/run-eolo-access-bridge-docker.ps1 -OutFile run-eolo-access-bridge-docker.ps1"
+powershell -ExecutionPolicy Bypass -File .\run-eolo-access-bridge-docker.ps1
+```
+
+El script descarga `eoloapp/eolo-access-bridge:all-in-one-latest`, reemplaza el contenedor existente y arranca Bridge, ANPR y WebRTC con puertos/volumenes persistentes.
+
 Para conectar el equipo real, edita `.env`:
 
 ```env
