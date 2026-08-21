@@ -667,26 +667,12 @@ app.get(['/stream-player/:camera', '/operator/stream-player/:camera'], (req, res
 </html>`);
 });
 
-app.get(
-  ['/go2rtc/video-rtc.js', '/operator/go2rtc/video-rtc.js'],
-  asyncRoute(async (_req, res) => {
-    const response = await fetch(`${config.anpr.webrtcApiUrl}/video-rtc.js`, {
-      signal: AbortSignal.timeout(5000)
-    });
-    if (!response.ok) {
-      const error = new Error('No se pudo cargar el reproductor WebRTC.');
-      error.status = response.status;
-      throw error;
-    }
-    res.type('text/javascript').set('Cache-Control', 'public, max-age=3600');
-    res.send(await response.text());
-  })
-);
-
 app.get(['/webrtc-player/:camera', '/operator/webrtc-player/:camera'], (req, res) => {
   const cameraName = safeStreamName(req.params.camera || '');
-  const wsUrl = new URL('/api/ws', config.anpr.webrtcPublicUrl);
-  wsUrl.searchParams.set('src', cameraName);
+  const playerUrl = new URL('/stream.html', config.anpr.webrtcPublicUrl);
+  playerUrl.searchParams.set('src', cameraName);
+  playerUrl.searchParams.set('stream', 'webrtc');
+  res.set('Cache-Control', 'no-store');
   res.type('html').send(`<!doctype html>
 <html lang="es">
 <head>
@@ -694,50 +680,15 @@ app.get(['/webrtc-player/:camera', '/operator/webrtc-player/:camera'], (req, res
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     html, body { width: 100%; height: 100%; margin: 0; background: #101828; overflow: hidden; }
-    eolo-video-rtc, video { width: 100%; height: 100%; display: block; background: #101828; }
-    video { object-fit: cover; }
-    .status { position: absolute; inset: 0; display: grid; place-items: center; color: #d9e4ff; font: 13px Arial, sans-serif; text-align: center; padding: 16px; pointer-events: none; }
-    body.ready .status { display: none; }
+    iframe { width: 100%; height: 100%; border: 0; display: block; background: #101828; }
   </style>
 </head>
 <body>
-  <eolo-video-rtc id="player"></eolo-video-rtc>
-  <div class="status" id="status">Conectando ${escapeHtmlText(cameraName || 'camara')}...</div>
-  <script type="module">
-    import { VideoRTC } from '/go2rtc/video-rtc.js';
-
-    const statusNode = document.getElementById('status');
-
-    customElements.define('eolo-video-rtc', class extends VideoRTC {
-      oninit() {
-        super.oninit();
-        this.video.autoplay = true;
-        this.video.muted = true;
-        this.video.controls = false;
-        this.video.style.objectFit = 'cover';
-        this.video.addEventListener('playing', () => document.body.classList.add('ready'));
-        this.video.addEventListener('waiting', () => {
-          if (!document.body.classList.contains('ready')) statusNode.textContent = 'Esperando video...';
-        });
-      }
-
-      onopen() {
-        statusNode.textContent = 'Esperando video...';
-        return super.onopen();
-      }
-
-      onclose() {
-        if (!document.body.classList.contains('ready')) statusNode.textContent = 'Visualizador desconectado.';
-        return super.onclose();
-      }
-    });
-
-    const player = document.getElementById('player');
-    player.mode = 'webrtc';
-    player.media = 'video';
-    player.background = true;
-    player.src = ${JSON.stringify(wsUrl.toString())};
-  </script>
+  <iframe
+    title="WebRTC ${escapeHtmlText(cameraName || 'camara')}"
+    src="${escapeHtmlText(playerUrl.toString())}"
+    allow="autoplay; fullscreen; camera; microphone"
+    loading="eager"></iframe>
 </body>
 </html>`);
 });
