@@ -1625,3 +1625,36 @@ Gist secret usado para descarga sin depender del repo privado:
 ```text
 https://gist.github.com/joqr231210/30692d997dcf49a183da9c37e3ad2016
 ```
+
+## Actualizacion 2026-08-21 - ID2 local por dispositivo
+
+Se reviso Bubble `bridge-dev` (`version-13i8l`) con Buildprint:
+
+- `AccesoMovimiento` guarda el folio en `id2_text`.
+- El acceso `Acceso Principal Prueba` tiene `Accesos.id2_text = AC34`.
+- Los movimientos historicos muestran folios tipo `AC34A951`, `AC34A952`, `AC34A973`.
+
+Implementacion local:
+
+- El cliente envia `access_id2` tomado del acceso activo.
+- El servidor genera `id2_text` antes de crear el movimiento.
+- Formato local compacto:
+
+```text
+<AccessID2><MachineCode><LocalCounter>
+AC34K700001
+```
+
+- `MachineCode` se deriva del identificador persistente local del bridge.
+- `LocalCounter` se guarda en `/app/data/operator-id2-counters.json`, por acceso y maquina.
+- Si EOLO Cloud esta offline, el mismo `id2_text` queda en el movimiento pendiente y se sincroniza despues.
+- Al crear en Cloud, el payload envia `id2_text` y despues se refuerza con PATCH Data API sobre `custom.accesomovimiento.id2_text`.
+- La tabla de movimientos prioriza `id2_text`/`id2` como folio visible antes del Unique ID Bubble.
+
+Validacion ejecutada:
+
+```bash
+node --check src/server.js
+node --check public/operator.js
+git diff --check
+```

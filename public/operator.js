@@ -2867,6 +2867,7 @@ function formPayload() {
     kind: state.movementKind,
     movement_type: state.movementType,
     id_acceso: state.activeAccess?.id || '',
+    access_id2: state.activeAccess?.id2 || state.activeAccess?.id2_text || state.activeAccess?.raw?.id2_text || '',
     id_punto_control: state.activeControlPoint?.id || '',
     punto_control_name: controlPointLabel(state.activeControlPoint || {}),
     control_point_action: state.activeControlPoint?.actionType || '',

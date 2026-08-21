@@ -43,6 +43,7 @@ let eventStream = createEventStream();
 let taskRunner = new TaskRunner(device, eoloClient);
 let eoloUserSync = new EoloUserSync(device, eoloClient);
 const serviceManager = new ServiceManager();
+let operatorId2CounterQueue = Promise.resolve();
 registerServices();
 
 app.use(cors());
@@ -1165,14 +1166,15 @@ app.post(
         error.status = 400;
         throw error;
       }
+      const movementPayload = await ensureOperatorMovementLocalId2(req.body, accessId);
       const createdMovement = await createOperatorCloudMovement(
         req.operatorSession,
-        req.body,
+        movementPayload,
         accessId,
         controlPointId
       ).catch(async (error) => {
         if (!isRetryableOperatorCloudError(error)) throw error;
-        const pending = await createPendingOperatorMovement(req.body, accessId, controlPointId, error);
+        const pending = await createPendingOperatorMovement(movementPayload, accessId, controlPointId, error);
         await log('warn', 'Movimiento de operador guardado localmente por EOLO Cloud inaccesible', {
           localId: pending.id,
           accessId,
@@ -2593,15 +2595,24 @@ async function createOperatorCloudMovement(session, payload, accessId, controlPo
     error.body = body;
     throw error;
   }
-  const createdMovement = normalizeOperatorMovement(body, accessId);
+  const createdMovement = applyOperatorId2ToMovement(normalizeOperatorMovement(body, accessId), bodyPayload);
+  await syncOperatorMovementId2ToCloud(session, createdMovement, bodyPayload).catch((error) => {
+    log('warn', 'No se pudo reflejar ID2 local en AccesoMovimiento por Data API', {
+      movementId: createdMovement?.id,
+      id2: bodyPayload.id2_text,
+      error: error.message,
+      status: error.status
+    }).catch(() => {});
+  });
   const movementWithVehiclePhoto = vehicleFileUrl && createdMovement
     ? { ...createdMovement, entry_image: createdMovement.entry_image || vehicleFileUrl }
     : createdMovement;
   if (!idPhotoDataUrl && !idPhotoUrl) {
-    return await enrichOperatorCloudMovement(session, movementWithVehiclePhoto, bodyPayload, accessId, {
+    const enrichedMovement = await enrichOperatorCloudMovement(session, movementWithVehiclePhoto, bodyPayload, accessId, {
       companions,
       skipVehicleDriverSync: workflowHandlesVehicleDriver
-    }) || movementWithVehiclePhoto;
+    });
+    return applyOperatorId2ToMovement(enrichedMovement || movementWithVehiclePhoto, bodyPayload);
   }
   if (!movementWithVehiclePhoto?.id) {
     const error = new Error('EOLO creo el movimiento, pero no devolvio un ID para adjuntar la identificacion.');
@@ -2624,7 +2635,30 @@ async function createOperatorCloudMovement(session, payload, accessId, controlPo
     companions,
     skipVehicleDriverSync: workflowHandlesVehicleDriver
   });
-  return enrichedMovement || movementWithIdPhoto;
+  return applyOperatorId2ToMovement(enrichedMovement || movementWithIdPhoto, bodyPayload);
+}
+
+function applyOperatorId2ToMovement(movement, payload = {}) {
+  const id2 = normalizeOperatorMovementId2(firstText(payload.id2_text, payload.id2, payload.folio_display));
+  if (!movement || !id2) return movement;
+  return {
+    ...movement,
+    id2,
+    id2_text: id2,
+    folio_display: id2,
+    raw: {
+      ...(movement.raw || {}),
+      id2_text: id2
+    }
+  };
+}
+
+async function syncOperatorMovementId2ToCloud(session, movement, payload = {}) {
+  const id2 = normalizeOperatorMovementId2(firstText(payload.id2_text, payload.id2, payload.folio_display));
+  if (!session || !movement?.id || !id2) return null;
+  return await patchOperatorDataItem(session, 'accesomovimiento', movement.id, {
+    id2_text: id2
+  });
 }
 
 async function uploadOperatorBubbleFile(session, dataUrl, { attachTo = '', filename = '' } = {}) {
@@ -3215,7 +3249,7 @@ function pendingPayloadToMovement({
   return {
     id,
     uid_bubble: '',
-    folio_display: id,
+    folio_display: firstText(source.id2_text, source.id2, rawPayload?.id2_text, rawPayload?.id2) || id,
     accessId,
     controlPointId,
     local_pending: true,
@@ -3544,6 +3578,112 @@ async function operatorBridgeDeviceId() {
   return generated;
 }
 
+async function ensureOperatorMovementLocalId2(payload = {}, accessId = '') {
+  const existing = normalizeOperatorMovementId2(
+    firstText(payload.id2_text, payload.id2, payload.folio_display, payload.folio)
+  );
+  if (existing) {
+    return {
+      ...payload,
+      id2_text: existing,
+      id2: existing,
+      folio_display: existing
+    };
+  }
+  const accessPrefix =
+    normalizeOperatorId2Prefix(
+      firstText(
+        payload.access_id2,
+        payload.accessId2,
+        payload.id2_acceso,
+        payload.acceso_id2,
+        payload.access_id2_text,
+        payload.acceso_id2_text
+      )
+    ) || fallbackOperatorId2Prefix(accessId);
+  const deviceId = await operatorBridgeDeviceId();
+  const deviceCode = operatorId2DeviceCode(deviceId);
+  const counter = await nextOperatorId2Counter(accessId, accessPrefix, deviceCode);
+  const id2 = `${accessPrefix}${deviceCode}${String(counter).padStart(5, '0')}`;
+  return {
+    ...payload,
+    access_id2: accessPrefix,
+    id2_text: id2,
+    id2,
+    folio_display: id2,
+    origen_id2_text: 'local_bridge',
+    dispositivo_id_text: deviceId
+  };
+}
+
+function operatorId2CountersPath() {
+  return path.join(config.dataDir, 'operator-id2-counters.json');
+}
+
+async function nextOperatorId2Counter(accessId = '', accessPrefix = '', deviceCode = '') {
+  const key = [normalizeBridgeDeviceId(accessId) || 'access', accessPrefix || 'AC', deviceCode || '00'].join(':');
+  const run = operatorId2CounterQueue.then(async () => {
+    const state = await loadOperatorId2Counters();
+    const current = Number(state.counters?.[key] || 0);
+    const next = current + 1;
+    state.counters = { ...(state.counters || {}), [key]: next };
+    state.updatedAt = new Date().toISOString();
+    await saveOperatorId2Counters(state);
+    return next;
+  });
+  operatorId2CounterQueue = run.catch(() => {});
+  return run;
+}
+
+async function loadOperatorId2Counters() {
+  try {
+    const raw = await fs.promises.readFile(operatorId2CountersPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : { counters: {} };
+  } catch (error) {
+    if (error.code === 'ENOENT') return { counters: {} };
+    throw error;
+  }
+}
+
+async function saveOperatorId2Counters(state) {
+  await fs.promises.mkdir(config.dataDir, { recursive: true });
+  const filePath = operatorId2CountersPath();
+  const tmpPath = `${filePath}.tmp`;
+  await fs.promises.writeFile(tmpPath, JSON.stringify(state, null, 2), 'utf8');
+  await fs.promises.rename(tmpPath, filePath);
+}
+
+function normalizeOperatorId2Prefix(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 8);
+}
+
+function normalizeOperatorMovementId2(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Za-z0-9-]/g, '')
+    .toUpperCase()
+    .slice(0, 32);
+}
+
+function fallbackOperatorId2Prefix(accessId = '') {
+  const source = firstText(accessId, 'access');
+  const hash = crypto.createHash('sha256').update(source).digest('hex').slice(0, 4).toUpperCase();
+  return `AC${hash.slice(0, 2)}`;
+}
+
+function operatorId2DeviceCode(deviceId = '') {
+  const hash = crypto.createHash('sha256').update(firstText(deviceId, os.hostname(), 'bridge')).digest();
+  const value = hash.readUInt16BE(0) % 1296;
+  return value.toString(36).toUpperCase().padStart(2, '0');
+}
+
 function normalizeBridgeDeviceId(value) {
   return String(value || '')
     .trim()
@@ -3748,6 +3888,11 @@ function buildOperatorMovementPayload(payload = {}, accessId, controlPointId) {
     tipo_transporte: kind,
     movement_type: movementType,
     razon_acceso: movementType,
+    id2_text: normalizeOperatorMovementId2(value('id2_text', 'id2', 'folio_display', 'folio')),
+    id2: normalizeOperatorMovementId2(value('id2', 'id2_text', 'folio_display', 'folio')),
+    access_id2: normalizeOperatorId2Prefix(value('access_id2', 'accessId2', 'id2_acceso', 'acceso_id2')),
+    origen_id2_text: value('origen_id2_text'),
+    dispositivo_id_text: value('dispositivo_id_text'),
     placa: plate,
     placas: plate,
     economic_number: value('economic_number', 'n_economico'),
@@ -4021,6 +4166,8 @@ function normalizeOperatorAccesses(body) {
         item.identificador_auxiliar_vehicular,
         item['Identificador Auxiliar Vehicular']
       ),
+      id2: normalizeOperatorId2Prefix(firstText(item.id2, item.id2_text, item.ID2, item['ID 2'])),
+      id2_text: normalizeOperatorId2Prefix(firstText(item.id2_text, item.id2, item.ID2, item['ID 2'])),
       team: typeof team === 'object' ? team._id || team.id || '' : team,
       logo,
       active: item.active ?? item.activo_boolean ?? item.Activo ?? true,
@@ -4111,7 +4258,7 @@ function normalizeOperatorMovements(body, fallbackAccessId = '') {
       id: id || item._id || '',
       uid_bubble: item._id || id || '',
       folio_display:
-        firstText(getField(item, 'folio_display', 'Folio', 'folio', 'ID', 'id_display')) ||
+        firstText(getField(item, 'id2_text', 'id2', 'ID2', 'ID 2', 'folio_display', 'Folio', 'folio', 'id_display')) ||
         id ||
         item._id ||
         '',
@@ -4282,7 +4429,7 @@ function normalizeOperatorMovement(body, fallbackAccessId = '') {
   return {
     id,
     uid_bubble: id,
-    folio_display: id,
+    folio_display: firstText(response.id2_text, response.id2, response.folio_display) || id,
     accessId: firstText(response.access_id) || fallbackAccessId,
     controlPointId: firstText(response.control_point_id),
     status: normalizeMovementStatus(response.status || 'Pendiente'),
