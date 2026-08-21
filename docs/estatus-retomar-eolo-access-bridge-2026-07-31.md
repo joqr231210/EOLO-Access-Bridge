@@ -1605,15 +1605,23 @@ sha256:54cae183326b3c1834cbebf638a85cfa1e64428b227d5226f08fe3fb0f4441e3
 
 Se agrego `scripts/run-eolo-access-bridge-docker.ps1` para equipos Windows con Docker Desktop instalado:
 
-- hace pull de `eoloapp/eolo-access-bridge:all-in-one-latest`;
+- hace pull de `eoloapp/eolo-access-bridge:0.2.4-all-in-one-amd64`;
 - reemplaza el contenedor `eolo-access-bridge` si ya existe;
 - crea/reutiliza volumes `eolo_access_data` y `eolo_access_uploads`;
 - publica puertos `8080`, `8083`, `8090`, `1984` y `8555/tcp+udp`;
 - configura variables ANPR/WebRTC para uso local.
+- conserva la ventana abierta y muestra instrucciones si Docker Hub responde `authentication required`.
 
 Uso rapido desde PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/joqr231210/EOLO-Access-Bridge/main/scripts/run-eolo-access-bridge-docker.ps1 -OutFile run-eolo-access-bridge-docker.ps1"
+cd $env:USERPROFILE\Downloads
+powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri https://gist.githubusercontent.com/joqr231210/30692d997dcf49a183da9c37e3ad2016/raw/9c2be7d568a96a8dd76fd64bba4eed286601efae/run-eolo-access-bridge-docker.ps1 -OutFile run-eolo-access-bridge-docker.ps1"
 powershell -ExecutionPolicy Bypass -File .\run-eolo-access-bridge-docker.ps1
+```
+
+Gist secret usado para descarga sin depender del repo privado:
+
+```text
+https://gist.github.com/joqr231210/30692d997dcf49a183da9c37e3ad2016
 ```
