@@ -956,16 +956,16 @@ function syncStreamPreferences() {
 function renderStreamCameraCard(camera, running) {
   return `
     <article class="stream-camera-card">
-      <header>
-        <strong>${escapeHtml(camera.name)}</strong>
-        <span>${escapeHtml(camera.type || 'Camara')}</span>
-      </header>
       <div class="stream-camera-frame">
         ${
           running
             ? `<iframe title="Vista ${escapeHtml(camera.name)}" src="${escapeHtml(camera.playerUrl)}" loading="lazy"></iframe>`
             : '<div class="stream-camera-placeholder">Visualizador inactivo</div>'
         }
+        <div class="stream-camera-label">
+          <strong>${escapeHtml(camera.name)}</strong>
+          <span>${escapeHtml(camera.type || 'Camara')}</span>
+        </div>
         <button class="anpr-plate-overlay hidden" type="button" data-anpr-plate="${escapeHtml(camera.name)}" title="Usar esta placa y fotografia">
           <span>PLACA LEIDA</span>
           <strong>---</strong>
