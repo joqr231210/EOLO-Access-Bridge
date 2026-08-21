@@ -2596,14 +2596,6 @@ async function createOperatorCloudMovement(session, payload, accessId, controlPo
     throw error;
   }
   const createdMovement = applyOperatorId2ToMovement(normalizeOperatorMovement(body, accessId), bodyPayload);
-  await syncOperatorMovementId2ToCloud(session, createdMovement, bodyPayload).catch((error) => {
-    log('warn', 'No se pudo reflejar ID2 local en AccesoMovimiento por Data API', {
-      movementId: createdMovement?.id,
-      id2: bodyPayload.id2_text,
-      error: error.message,
-      status: error.status
-    }).catch(() => {});
-  });
   const movementWithVehiclePhoto = vehicleFileUrl && createdMovement
     ? { ...createdMovement, entry_image: createdMovement.entry_image || vehicleFileUrl }
     : createdMovement;
@@ -2651,14 +2643,6 @@ function applyOperatorId2ToMovement(movement, payload = {}) {
       id2_text: id2
     }
   };
-}
-
-async function syncOperatorMovementId2ToCloud(session, movement, payload = {}) {
-  const id2 = normalizeOperatorMovementId2(firstText(payload.id2_text, payload.id2, payload.folio_display));
-  if (!session || !movement?.id || !id2) return null;
-  return await patchOperatorDataItem(session, 'accesomovimiento', movement.id, {
-    id2_text: id2
-  });
 }
 
 async function uploadOperatorBubbleFile(session, dataUrl, { attachTo = '', filename = '' } = {}) {

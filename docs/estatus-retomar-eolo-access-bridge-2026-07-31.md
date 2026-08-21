@@ -1648,8 +1648,18 @@ AC34K700001
 - `MachineCode` se deriva del identificador persistente local del bridge.
 - `LocalCounter` se guarda en `/app/data/operator-id2-counters.json`, por acceso y maquina.
 - Si EOLO Cloud esta offline, el mismo `id2_text` queda en el movimiento pendiente y se sincroniza despues.
-- Al crear en Cloud, el payload envia `id2_text` y despues se refuerza con PATCH Data API sobre `custom.accesomovimiento.id2_text`.
+- Al crear en Cloud, el payload envia `id2_text` al workflow `bridge_operator_create_movement`.
 - La tabla de movimientos prioriza `id2_text`/`id2` como folio visible antes del Unique ID Bubble.
+
+### Correccion ID2 Bubble 2026-08-21
+
+Se detecto que el cliente local si generaba y enviaba `id2_text`, pero el workflow Bubble `bridge_operator_create_movement` no tenia declarado ese parametro ni lo asignaba al nuevo `AccesoMovimiento`.
+
+Correccion aplicada en Bubble `bridge-dev`:
+
+- Se agrego el parametro opcional `id2_text` al endpoint `bridge_operator_create_movement`.
+- Se asigno `id2_text` en la accion `Create pending movement` al crear `custom.accesomovimiento`.
+- Se elimino del servidor local el intento posterior de PATCH Data API para ID2, ya que el campo debe persistirse atomicamente desde el workflow de creacion.
 
 Validacion ejecutada:
 
@@ -1658,3 +1668,7 @@ node --check src/server.js
 node --check public/operator.js
 git diff --check
 ```
+
+Validacion posterior al fix en Bubble:
+
+- Movimiento `1787318401699x481307497632044600` creado en `bridge-dev` ya aparece con `id2_text = AC34CI00005`.
