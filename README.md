@@ -60,13 +60,13 @@ npm run desktop:win:full
 El instalador Windows queda en:
 
 ```text
-release\EOLO Access Bridge Setup 0.2.6.exe
+release\EOLO Access Bridge Setup 0.2.7.exe
 ```
 
 El instalador macOS queda en:
 
 ```text
-release/EOLO Access Bridge-0.2.6-arm64.dmg
+release/EOLO Access Bridge-0.2.7-arm64.dmg
 ```
 
 Notas:

@@ -1735,3 +1735,20 @@ Salida esperada:
 ```text
 release\EOLO Access Bridge Setup 0.2.6.exe
 ```
+
+## Actualizacion 2026-08-21 - Electron Windows v0.2.7
+
+Version local visible en login: `v0.2.7`.
+
+Correcciones:
+
+- Los selectores laterales de `Acceso activo` y `Punto de control` ya no muestran texto de cambio cuando ya existe seleccion; solo conservan los datos actuales.
+- El proceso ANPR empaquetado se detiene con `taskkill /T /F` en Windows al cerrar Electron para evitar que quede consumiendo recursos.
+- Se agregaron acciones de menu `Detener ANPR` y `Reiniciar ANPR`.
+- Se integro el logo EOLO en favicon, login, panel tecnico e iconos del instalador Electron (`build/icon.ico` y `build/icon.icns`).
+
+Salida esperada:
+
+```text
+release\EOLO Access Bridge Setup 0.2.7.exe
+```

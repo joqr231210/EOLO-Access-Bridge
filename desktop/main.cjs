@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Menu, dialog, shell } = require('electron');
-const { spawn } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
@@ -139,6 +139,9 @@ function appendLog(filePath, chunk) {
 }
 
 function startAnprSidecar(context) {
+  if (anprProcess && anprProcess.exitCode === null && !anprProcess.killed) {
+    return true;
+  }
   const logFile = path.join(context.anprDataDir, 'anpr-sidecar.log');
   const sidecarPath = anprExecutablePath();
   const env = {
@@ -183,6 +186,47 @@ function startAnprSidecar(context) {
   return true;
 }
 
+function killProcessTree(processRef, logFile) {
+  if (!processRef || processRef.exitCode !== null || processRef.killed) return Promise.resolve();
+  const pid = processRef.pid;
+  if (process.platform === 'win32' && pid) {
+    return new Promise((resolve) => {
+      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], (error, stdout, stderr) => {
+        appendLog(
+          logFile,
+          `[desktop] taskkill pid=${pid} error=${error ? error.message : 'none'} stdout=${stdout || ''} stderr=${stderr || ''}\n`
+        );
+        resolve();
+      });
+    });
+  }
+  processRef.kill('SIGTERM');
+  return new Promise((resolve) => setTimeout(resolve, 600));
+}
+
+async function stopAnprSidecar({ force = false } = {}) {
+  if (!anprProcess) return;
+  const logFile = path.join(bridgeContext?.anprDataDir || app.getPath('userData'), 'anpr-sidecar.log');
+  const processRef = anprProcess;
+  appendLog(logFile, `[desktop] Deteniendo ANPR sidecar force=${force}\n`);
+  if (force || process.platform === 'win32') {
+    await killProcessTree(processRef, logFile);
+  } else {
+    processRef.kill('SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+  }
+  if (processRef.exitCode === null && !processRef.killed) {
+    processRef.kill('SIGKILL');
+  }
+  if (anprProcess === processRef) anprProcess = null;
+}
+
+async function restartAnprSidecar() {
+  if (!bridgeContext) return;
+  await stopAnprSidecar({ force: true });
+  startAnprSidecar(bridgeContext);
+}
+
 async function waitForService(url, attempts = 80) {
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -205,7 +249,7 @@ async function stopManagedProcesses() {
     }).catch(() => {});
   }
   if (anprProcess && anprProcess.exitCode === null && !anprProcess.killed) {
-    anprProcess.kill('SIGTERM');
+    await stopAnprSidecar({ force: true });
   }
 }
 
@@ -260,6 +304,15 @@ function buildApplicationMenu() {
         {
           label: 'Abrir carpeta ANPR',
           click: () => shell.openPath(bridgeContext.anprDataDir)
+        },
+        { type: 'separator' },
+        {
+          label: 'Detener ANPR',
+          click: () => stopAnprSidecar({ force: true })
+        },
+        {
+          label: 'Reiniciar ANPR',
+          click: () => restartAnprSidecar()
         },
         { type: 'separator' },
         { role: 'reload', label: 'Recargar' },
@@ -348,6 +401,6 @@ app.on('before-quit', (event) => {
 
 app.on('will-quit', () => {
   if (anprProcess && anprProcess.exitCode === null && !anprProcess.killed) {
-    anprProcess.kill('SIGKILL');
+    stopAnprSidecar({ force: true }).catch(() => {});
   }
 });

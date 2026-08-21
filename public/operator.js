@@ -553,8 +553,8 @@ function renderActiveAccessSidebar() {
   $('#activeControlPointMeta').textContent = state.activeControlPoint
     ? state.activeControlPoint.type || state.activeControlPoint.actionType || 'Activo'
     : 'Obligatorio';
-  $('#activeAccessHint').textContent = state.activeAccess ? 'Cambiar acceso' : 'Elegir acceso';
-  $('#activeControlPointHint').textContent = state.activeControlPoint ? 'Cambiar punto' : 'Elegir punto';
+  $('#activeAccessHint').textContent = state.activeAccess ? '' : 'Elegir acceso';
+  $('#activeControlPointHint').textContent = state.activeControlPoint ? '' : 'Elegir punto';
   $('#activeControlPointBtn').disabled = !state.activeAccess;
   $('#activeControlPointBtn').classList.toggle('active', Boolean(state.activeControlPoint));
   renderVehicleAuxIdentifierLabel();

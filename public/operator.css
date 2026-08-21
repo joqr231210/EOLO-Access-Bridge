@@ -289,6 +289,13 @@ button {
   text-align: left;
 }
 
+.login-logo {
+  width: 92px;
+  max-height: 38px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
 .login-emblem {
   width: 48px;
   height: 48px;
@@ -932,6 +939,11 @@ input.locked-field {
   font-size: 12px;
   font-style: normal;
   font-weight: 800;
+}
+
+.access-select em:empty,
+.control-point-select em:empty {
+  display: none;
 }
 
 .control-point-select {
