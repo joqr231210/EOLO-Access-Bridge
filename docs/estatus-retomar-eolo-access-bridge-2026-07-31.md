@@ -1556,3 +1556,47 @@ node --check src/server.js
 node --check desktop/main.cjs
 git diff --check
 ```
+
+## Actualizacion 2026-08-21 - Docker Hub v0.2.4
+
+Version local visible en login: `v0.2.4`.
+
+Contenido del corte:
+
+- Cliente/panel local EOLO Access Bridge en `/`.
+- Ajustes tecnicos en `/settings`.
+- ANPR incluido en la imagen all-in-one.
+- Visualizador WebRTC/go2rtc incluido en la imagen all-in-one.
+- Branding actualizado de `EOLO Hikvision Local` a `EOLO Access Bridge`.
+- Repo GitHub privado publicado en `https://github.com/joqr231210/EOLO-Access-Bridge`.
+
+Build/push planeado:
+
+```bash
+docker buildx build --platform linux/amd64 -f Dockerfile.all-in-one \
+  --build-arg ANPR_BASE_IMAGE=eoloapp/eolo-access-bridge:0.2.3-all-in-one-amd64 \
+  -t eoloapp/eolo-access-bridge:0.2.4-all-in-one \
+  -t eoloapp/eolo-access-bridge:0.2.4-all-in-one-amd64 \
+  -t eoloapp/eolo-access-bridge:all-in-one-latest \
+  --push .
+```
+
+Docker Hub publicado:
+
+```bash
+docker pull eoloapp/eolo-access-bridge:0.2.4-all-in-one
+docker pull eoloapp/eolo-access-bridge:0.2.4-all-in-one-amd64
+docker pull eoloapp/eolo-access-bridge:all-in-one-latest
+```
+
+Digest publicado:
+
+```text
+sha256:01f501c2484c207121284efe9f87eb666d2135206a88fbf8f1569dcd404e5b41
+```
+
+Manifest `linux/amd64`:
+
+```text
+sha256:54cae183326b3c1834cbebf638a85cfa1e64428b227d5226f08fe3fb0f4441e3
+```

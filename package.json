@@ -1,6 +1,6 @@
 {
   "name": "eolo-access-bridge",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Bridge local EOLO para operar accesos, ANPR, camaras y terminales ISAPI.",
   "author": "EOLO",
   "type": "module",
