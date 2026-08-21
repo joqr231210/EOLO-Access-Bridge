@@ -354,22 +354,46 @@
             <div class="stream-camera-grid" id="streamCameraGrid"></div>
           </section>
 
-          <section class="inventory-grid">
-            <article class="inventory-card">
-              <span class="inventory-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-car"></use></svg></span>
-              <div>
-                <span>Inventario <b id="vehicleVisitsBadge">0 Visitas</b></span>
-                <strong id="vehicleInventory">0</strong>
+          <div class="camera-side-column">
+            <section class="inventory-grid">
+              <article class="inventory-card">
+                <span class="inventory-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-car"></use></svg></span>
+                <div>
+                  <span>Inventario <b id="vehicleVisitsBadge">0 Visitas</b></span>
+                  <strong id="vehicleInventory">0</strong>
+                </div>
+              </article>
+              <article class="inventory-card">
+                <span class="inventory-icon pedestrian"><svg class="ui-icon" aria-hidden="true"><use href="#icon-person"></use></svg></span>
+                <div>
+                  <span>Inventario <b id="pedestrianVisitsBadge">0 Visitas</b></span>
+                  <strong id="pedestrianInventory">0</strong>
+                </div>
+              </article>
+            </section>
+
+            <section class="filters-grid">
+              <div class="search-box" id="movementSearchBox">
+                <span><svg class="ui-icon" aria-hidden="true"><use href="#icon-search"></use></svg></span>
+                <input id="movementSearch" placeholder="Buscar" />
+                <button class="clear-filter-button hidden" type="button" id="clearMovementSearchBtn" aria-label="Limpiar búsqueda">
+                  <svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+                </button>
               </div>
-            </article>
-            <article class="inventory-card">
-              <span class="inventory-icon pedestrian"><svg class="ui-icon" aria-hidden="true"><use href="#icon-person"></use></svg></span>
-              <div>
-                <span>Inventario <b id="pedestrianVisitsBadge">0 Visitas</b></span>
-                <strong id="pedestrianInventory">0</strong>
+              <div class="search-box" id="statusFilterBox">
+                <span><svg class="ui-icon" aria-hidden="true"><use href="#icon-filter"></use></svg></span>
+                <select id="statusFilter">
+                  <option value="">Filtros</option>
+                  <option value="Ingresado">Ingresado</option>
+                  <option value="Egresado">Egresado</option>
+                  <option value="Solicitado">Solicitado</option>
+                </select>
+                <button class="clear-filter-button hidden" type="button" id="clearStatusFilterBtn" aria-label="Limpiar filtros">
+                  <svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+                </button>
               </div>
-            </article>
-          </section>
+            </section>
+          </div>
         </section>
 
         <section class="pending-sync-panel hidden" id="pendingSyncPanel">
@@ -381,28 +405,6 @@
             <button class="ghost" type="button" id="syncPendingNowBtn">Intentar ahora</button>
           </header>
           <div class="pending-sync-list" id="pendingSyncList"></div>
-        </section>
-
-        <section class="filters-grid">
-          <div class="search-box" id="movementSearchBox">
-            <span><svg class="ui-icon" aria-hidden="true"><use href="#icon-search"></use></svg></span>
-            <input id="movementSearch" placeholder="Buscar" />
-            <button class="clear-filter-button hidden" type="button" id="clearMovementSearchBtn" aria-label="Limpiar búsqueda">
-              <svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg>
-            </button>
-          </div>
-          <div class="search-box" id="statusFilterBox">
-            <span><svg class="ui-icon" aria-hidden="true"><use href="#icon-filter"></use></svg></span>
-            <select id="statusFilter">
-              <option value="">Filtros</option>
-              <option value="Ingresado">Ingresado</option>
-              <option value="Egresado">Egresado</option>
-              <option value="Solicitado">Solicitado</option>
-            </select>
-            <button class="clear-filter-button hidden" type="button" id="clearStatusFilterBtn" aria-label="Limpiar filtros">
-              <svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg>
-            </button>
-          </div>
         </section>
 
         <section class="table-card">

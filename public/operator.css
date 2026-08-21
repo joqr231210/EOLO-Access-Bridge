@@ -1647,20 +1647,31 @@ input.locked-field {
   display: block;
 }
 
+.camera-side-column {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+
 .inventory-grid {
   grid-template-columns: repeat(2, minmax(220px, 1fr));
   margin-top: 18px;
 }
 
+.camera-side-column .inventory-grid,
+.camera-side-column .filters-grid {
+  margin-top: 0;
+}
+
 .camera-inventory-layout.single-camera-split {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(260px, 1fr);
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
   gap: 18px;
   align-items: start;
 }
 
 .camera-inventory-layout.single-camera-split .stream-camera-panel,
-.camera-inventory-layout.single-camera-split .inventory-grid {
+.camera-inventory-layout.single-camera-split .camera-side-column {
   margin-top: 18px;
 }
 
@@ -1673,6 +1684,14 @@ input.locked-field {
 }
 
 .camera-inventory-layout.single-camera-split .inventory-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.camera-inventory-layout.single-camera-split .camera-side-column {
+  gap: 18px;
+}
+
+.camera-inventory-layout.single-camera-split .filters-grid {
   grid-template-columns: minmax(0, 1fr);
 }
 
@@ -1955,12 +1974,12 @@ input.locked-field {
   background: #101828;
 }
 
-.hide-anpr-logs .anpr-engine-status {
+.hide-anpr-logs .stream-camera-card > .stream-camera-tools {
   display: none;
 }
 
 .hide-stream-tools .stream-camera-tools.global .stream-camera-inline-controls,
-.hide-stream-tools .anpr-engine-status {
+.hide-stream-tools .stream-camera-card > .stream-camera-tools {
   display: none;
 }
 
