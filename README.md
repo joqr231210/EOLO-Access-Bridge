@@ -39,7 +39,7 @@ npm run dev
 Abre:
 
 - Operador: `http://localhost:8080`
-- Ajustes tecnicos: `http://localhost:8080/settings`
+- Ajustes tecnicos: `http://localhost:8080/settings` o desde Operador > Ajustes > Panel Técnico
 
 ## Instalador Electron con ANPR
 
@@ -60,13 +60,13 @@ npm run desktop:win:full
 El instalador Windows queda en:
 
 ```text
-release\EOLO Access Bridge Setup 0.2.7.exe
+release\EOLO Access Bridge Setup 0.2.8.exe
 ```
 
 El instalador macOS queda en:
 
 ```text
-release/EOLO Access Bridge-0.2.7-arm64.dmg
+release/EOLO Access Bridge-0.2.8-arm64.dmg
 ```
 
 Notas:

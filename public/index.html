@@ -20,7 +20,10 @@
           </div>
         </div>
         <nav class="nav">
-          <button class="nav-item operator-return" type="button" data-open-operator>Operador</button>
+          <button class="nav-item operator-return" type="button" data-open-operator>
+            <span class="nav-icon" aria-hidden="true">←</span>
+            <span>Operador</span>
+          </button>
           <button class="nav-item hidden" data-panel="chat" hidden>Comandos</button>
           <button class="nav-item hidden" data-panel="employees" hidden>Empleados</button>
           <div class="nav-group" id="servicesNavGroup">
@@ -31,7 +34,6 @@
             <div class="nav-submenu" id="serviceSidebarMenu" role="menu" aria-label="Servicios"></div>
           </div>
           <button class="nav-item hidden" data-panel="events" hidden>Eventos</button>
-          <button class="nav-item" data-panel="settings">Configuracion</button>
         </nav>
         <div class="status-card" hidden>
           <span class="status-dot" id="statusDot"></span>
@@ -218,8 +220,8 @@
           </div>
         </section>
 
-        <section class="panel" id="settingsPanel">
-          <div class="settings-page-layout">
+        <section class="panel" id="settingsPanel" hidden>
+          <div class="settings-page-layout" id="technicalSettingsLayout">
             <form class="settings-stack" id="deviceConfigForm" novalidate>
               <div class="tabs settings-tabs" role="tablist" aria-label="Configuracion">
                 <button class="tab-button active" type="button" data-settings-tab="device">Dispositivo Local</button>

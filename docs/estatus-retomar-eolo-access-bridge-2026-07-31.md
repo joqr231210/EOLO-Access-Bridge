@@ -1752,3 +1752,25 @@ Salida esperada:
 ```text
 release\EOLO Access Bridge Setup 0.2.7.exe
 ```
+
+## Actualizacion 2026-08-21 - Operador y Panel Tecnico v0.2.8
+
+Version local visible en login: `v0.2.8`.
+
+Correcciones:
+
+- Se retiro el acceso `Panel Técnico` del sidebar de Operador y del menu desplegable del perfil.
+- En Operador > Ajustes se agrego el tab `Panel Técnico`, que navega al panel tecnico.
+- El panel tecnico conserva el regreso a `Operador` con icono de flecha izquierda.
+- La configuracion local del dispositivo Face Recognition se movio al servicio `Face Recognition`, tab `Configuracion`.
+- El submenu de Face Recognition separa mejor `Estado`, `Configuracion` y `Empleados`.
+
+Publicacion:
+
+```text
+Git tag: v0.2.8
+Docker Hub:
+eoloapp/eolo-access-bridge:0.2.8-all-in-one
+eoloapp/eolo-access-bridge:0.2.8-all-in-one-amd64
+eoloapp/eolo-access-bridge:all-in-one-latest
+```

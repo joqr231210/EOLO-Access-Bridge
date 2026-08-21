@@ -23,6 +23,10 @@ const state = {
   }
 };
 
+if (window.location.hash === '#face-config') {
+  state.activeFaceRecognitionTab = 'config';
+}
+
 const $ = (selector) => document.querySelector(selector);
 const chatWindow = $('#chatWindow');
 const eventList = $('#eventList');
@@ -137,6 +141,7 @@ function logSource(record) {
 }
 
 function setPanel(panelName) {
+  parkTechnicalSettingsLayout();
   document.querySelectorAll('.nav-item').forEach((button) => {
     button.classList.toggle('active', button.dataset.panel === panelName);
   });
@@ -480,6 +485,7 @@ function renderServiceDetail() {
   const detail = $('#serviceDetail');
   if (!detail) return;
   parkEmployeeWorkspace();
+  parkTechnicalSettingsLayout();
   const tab = serviceTabs.find((item) => item.id === state.activeServiceTab) || serviceTabs[0];
   const service = serviceById(tab.id);
   const renderers = {
@@ -504,6 +510,7 @@ function renderServiceDetail() {
     ${(renderers[tab.id] || renderEmptyServiceView)(service)}
   `;
   mountEmployeeWorkspace();
+  mountTechnicalSettingsLayout();
   updateStreamToggle();
 }
 
@@ -524,6 +531,20 @@ function mountEmployeeWorkspace() {
       addMessage('assistant', error.message, { error: true })
     );
   }
+}
+
+function parkTechnicalSettingsLayout() {
+  const layout = $('#technicalSettingsLayout');
+  const panel = $('#settingsPanel');
+  if (!layout || !panel || layout.parentElement === panel) return;
+  panel.appendChild(layout);
+}
+
+function mountTechnicalSettingsLayout() {
+  const mount = $('#faceConfigMount');
+  const layout = $('#technicalSettingsLayout');
+  if (!mount || !layout) return;
+  mount.appendChild(layout);
 }
 
 function renderServiceStatusPill(service = {}) {
@@ -642,13 +663,29 @@ function renderServiceActions(serviceId, options = {}) {
 }
 
 function renderHikvisionServiceView() {
+  const configActive = state.activeFaceRecognitionTab === 'config';
   const employeesActive = state.activeFaceRecognitionTab === 'employees';
   return `
     <div class="service-inner-tabs" role="tablist" aria-label="Face Recognition">
-      <button class="service-inner-tab ${employeesActive ? '' : 'active'}" type="button" data-face-tab="operation">Operacion</button>
+      <button class="service-inner-tab ${!employeesActive && !configActive ? 'active' : ''}" type="button" data-face-tab="operation">Estado</button>
+      <button class="service-inner-tab ${configActive ? 'active' : ''}" type="button" data-face-tab="config">Configuracion</button>
       <button class="service-inner-tab ${employeesActive ? 'active' : ''}" type="button" data-face-tab="employees">Empleados</button>
     </div>
-    ${employeesActive ? renderFaceEmployeesView() : renderFaceOperationView()}
+    ${configActive ? renderFaceConfigView() : employeesActive ? renderFaceEmployeesView() : renderFaceOperationView()}
+  `;
+}
+
+function renderFaceConfigView() {
+  return `
+    <section class="service-section wide face-config-section">
+      <div class="service-section-heading">
+        <div>
+          <h4>Configuracion Face Recognition</h4>
+          <p>Conexion, credenciales y sincronizacion que usa el dispositivo local de reconocimiento facial.</p>
+        </div>
+      </div>
+      <div class="face-config-mount" id="faceConfigMount"></div>
+    </section>
   `;
 }
 

@@ -3130,7 +3130,7 @@ function bindEvents() {
   $$('[data-open-technical-settings]').forEach((button) => {
     button.addEventListener('click', () => {
       $$('[data-profile-menu]').forEach((menu) => menu.classList.remove('open'));
-      window.location.assign('/settings');
+      window.location.assign('/settings#face-config');
     });
   });
   $('#syncState').addEventListener('click', syncNow);
