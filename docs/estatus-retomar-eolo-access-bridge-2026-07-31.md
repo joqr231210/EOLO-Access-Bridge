@@ -1542,9 +1542,17 @@ Se preparo el proyecto para quedar versionado como `EOLO Access Bridge`:
 - Se cambio el titulo visible del panel base a `EOLO Access Bridge`.
 - Se actualizo el log de arranque del servidor para referirse al servicio como `EOLO Access Bridge`.
 - Se conserva la palabra Hikvision solo donde describe integraciones tecnicas ISAPI/Face Recognition.
-- El repo local queda listo para publicarse en GitHub desde la rama `main`.
+- El repo local quedo publicado en GitHub desde la rama `main`.
 
-Pendiente operativo:
+Repositorio:
 
-- Crear/publicar el repositorio remoto con GitHub CLI usando la cuenta autenticada.
-- Ejecutar validaciones de sintaxis despues del cambio de branding.
+- URL: `https://github.com/joqr231210/EOLO-Access-Bridge`
+- Visibilidad inicial: privado.
+
+Validacion ejecutada despues del cambio:
+
+```bash
+node --check src/server.js
+node --check desktop/main.cjs
+git diff --check
+```
