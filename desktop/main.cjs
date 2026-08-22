@@ -1,7 +1,9 @@
 const { app, BrowserWindow, Menu, dialog, shell } = require('electron');
 const { execFile, spawn } = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const net = require('node:net');
+const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -10,6 +12,12 @@ let bridgeServerPromise = null;
 let bridgeContext = null;
 let anprProcess = null;
 let shutdownStarted = false;
+let updateCheckTimer = null;
+let updateCheckInFlight = null;
+
+const DEFAULT_UPDATE_MANIFEST_URL =
+  'https://raw.githubusercontent.com/joqr231210/EOLO-Access-Bridge/main/updates/windows-latest.json';
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 function appRootPath() {
   return app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
@@ -25,6 +33,44 @@ function executableName(baseName) {
 
 function firstExisting(paths) {
   return paths.find((candidate) => candidate && fs.existsSync(candidate)) || '';
+}
+
+function readPackageMetadata() {
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(resourcePath('package.json'), 'utf8'));
+    return {
+      name: packageJson.name || 'eolo-access-bridge',
+      productName: packageJson.productName || 'EOLO Access Bridge',
+      version: packageJson.version || app.getVersion()
+    };
+  } catch {
+    return {
+      name: 'eolo-access-bridge',
+      productName: 'EOLO Access Bridge',
+      version: app.getVersion()
+    };
+  }
+}
+
+function currentAppVersion() {
+  return app.getVersion() || readPackageMetadata().version;
+}
+
+function compareVersions(a, b) {
+  const parse = (value) =>
+    String(value || '')
+      .replace(/^v/i, '')
+      .split(/[.+-]/)
+      .map((part) => Number.parseInt(part, 10))
+      .map((part) => (Number.isFinite(part) ? part : 0));
+  const left = parse(a);
+  const right = parse(b);
+  const length = Math.max(left.length, right.length, 3);
+  for (let index = 0; index < length; index += 1) {
+    const diff = (left[index] || 0) - (right[index] || 0);
+    if (diff !== 0) return diff > 0 ? 1 : -1;
+  }
+  return 0;
 }
 
 function canUsePort(port) {
@@ -315,6 +361,11 @@ function buildApplicationMenu() {
           click: () => restartAnprSidecar()
         },
         { type: 'separator' },
+        {
+          label: 'Buscar actualizaciones',
+          click: () => checkForInstallerUpdate({ manual: true })
+        },
+        { type: 'separator' },
         { role: 'reload', label: 'Recargar' },
         { role: 'toggleDevTools', label: 'Herramientas de desarrollador' },
         { type: 'separator' },
@@ -323,6 +374,261 @@ function buildApplicationMenu() {
     }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function updateManifestUrl() {
+  return (
+    process.env.EOLO_DESKTOP_UPDATE_MANIFEST_URL ||
+    process.env.EOLO_UPDATE_MANIFEST_URL ||
+    DEFAULT_UPDATE_MANIFEST_URL
+  ).trim();
+}
+
+function updatesDirectory() {
+  const directory = path.join(app.getPath('userData'), 'updates');
+  fs.mkdirSync(directory, { recursive: true });
+  return directory;
+}
+
+function safeUnlink(filePath) {
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    // Ignore cleanup errors for temporary update files.
+  }
+}
+
+async function fetchUpdateManifest() {
+  const url = updateManifestUrl();
+  if (!url) return null;
+  const response = await fetch(url, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(10000)
+  });
+  if (!response.ok) {
+    throw new Error(`No se pudo consultar manifiesto de actualizaciones (${response.status}).`);
+  }
+  return response.json();
+}
+
+function platformUpdateFromManifest(manifest = {}) {
+  const platform = process.platform === 'win32' ? 'windows' : process.platform;
+  const arch = process.arch === 'x64' ? 'x64' : process.arch;
+  const platformBlock = manifest[platform] || manifest.platforms?.[platform] || manifest.downloads?.[platform] || {};
+  const candidate = platformBlock[arch] || platformBlock.x64 || platformBlock.default || platformBlock;
+  if (typeof candidate === 'string') return { url: candidate };
+  return candidate || {};
+}
+
+function normalizeUpdateInfo(manifest = {}) {
+  const platformUpdate = platformUpdateFromManifest(manifest);
+  return {
+    version: String(platformUpdate.version || manifest.version || '').replace(/^v/i, ''),
+    url: String(platformUpdate.url || manifest.url || ''),
+    sha256: String(platformUpdate.sha256 || manifest.sha256 || '').toLowerCase(),
+    notes: String(platformUpdate.notes || manifest.notes || ''),
+    mandatory: Boolean(platformUpdate.mandatory || manifest.mandatory),
+    publishedAt: String(platformUpdate.publishedAt || manifest.publishedAt || '')
+  };
+}
+
+async function downloadUpdateInstaller(updateInfo) {
+  const response = await fetch(updateInfo.url, { signal: AbortSignal.timeout(120000) });
+  if (!response.ok) {
+    throw new Error(`No se pudo descargar el instalador (${response.status}).`);
+  }
+  if (!response.body) {
+    throw new Error('La respuesta de descarga no tiene contenido.');
+  }
+  const fileNameFromUrl = path.basename(new URL(updateInfo.url).pathname) || `EOLO Access Bridge Setup ${updateInfo.version}.exe`;
+  const safeFileName = fileNameFromUrl.replace(/[<>:"/\\|?*]+/g, '-');
+  const filePath = path.join(updatesDirectory(), safeFileName);
+  const tempPath = `${filePath}.download`;
+  const hash = crypto.createHash('sha256');
+  const writer = fs.createWriteStream(tempPath);
+  const reader = response.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      hash.update(chunk);
+      if (!writer.write(chunk)) {
+        await new Promise((resolve) => writer.once('drain', resolve));
+      }
+    }
+  } catch (error) {
+    writer.destroy();
+    safeUnlink(tempPath);
+    throw error;
+  }
+  await new Promise((resolve, reject) => {
+    writer.end(resolve);
+    writer.once('error', reject);
+  });
+  if (updateInfo.sha256) {
+    const digest = hash.digest('hex');
+    if (digest.toLowerCase() !== updateInfo.sha256) {
+      safeUnlink(tempPath);
+      throw new Error('La descarga no coincide con el checksum SHA-256 esperado.');
+    }
+  }
+  fs.renameSync(tempPath, filePath);
+  return filePath;
+}
+
+async function promptInstallDownloadedUpdate(updateInfo, installerPath) {
+  const detailLines = [
+    `Version actual: ${currentAppVersion()}`,
+    `Nueva version: ${updateInfo.version}`,
+    updateInfo.notes ? `\n${updateInfo.notes}` : '',
+    '\nAl iniciar el instalador se cerrara EOLO Access Bridge y se detendran sus procesos locales.'
+  ].filter(Boolean);
+  const result = await dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: 'Actualizacion lista',
+    message: 'La actualizacion de EOLO Access Bridge ya esta descargada.',
+    detail: detailLines.join('\n'),
+    buttons: ['Instalar ahora', 'Abrir carpeta', 'Despues'],
+    defaultId: 0,
+    cancelId: 2
+  });
+  if (result.response === 1) {
+    await shell.showItemInFolder(installerPath);
+    return;
+  }
+  if (result.response !== 0) return;
+  launchInstallerAfterExit(installerPath);
+  app.quit();
+}
+
+function launchInstallerAfterExit(installerPath) {
+  if (process.platform !== 'win32') {
+    spawn(installerPath, [], {
+      detached: true,
+      stdio: 'ignore'
+    }).unref();
+    return;
+  }
+  const launcherPath = path.join(updatesDirectory(), `install-after-exit-${Date.now()}.cmd`);
+  const escapedInstallerPath = installerPath.replace(/"/g, '""');
+  const script = [
+    '@echo off',
+    'setlocal',
+    `set "EOLO_PID=${process.pid}"`,
+    `set "EOLO_INSTALLER=${escapedInstallerPath}"`,
+    ':wait',
+    'tasklist /FI "PID eq %EOLO_PID%" | find "%EOLO_PID%" >nul',
+    'if not errorlevel 1 (',
+    '  timeout /t 1 /nobreak >nul',
+    '  goto wait',
+    ')',
+    'start "" "%EOLO_INSTALLER%"',
+    'del "%~f0"',
+    ''
+  ].join(os.EOL);
+  fs.writeFileSync(launcherPath, script);
+  spawn(process.env.ComSpec || 'cmd.exe', ['/c', launcherPath], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true
+  }).unref();
+}
+
+async function offerInstallerUpdate(updateInfo, { manual = false } = {}) {
+  const detailLines = [
+    `Version actual: ${currentAppVersion()}`,
+    `Nueva version: ${updateInfo.version}`,
+    updateInfo.publishedAt ? `Publicada: ${updateInfo.publishedAt}` : '',
+    updateInfo.notes ? `\n${updateInfo.notes}` : ''
+  ].filter(Boolean);
+  const result = await dialog.showMessageBox(mainWindow, {
+    type: updateInfo.mandatory ? 'warning' : 'info',
+    title: 'Actualizacion disponible',
+    message: 'Hay una nueva version de EOLO Access Bridge para Windows.',
+    detail: detailLines.join('\n'),
+    buttons: ['Descargar instalador', 'Abrir enlace', manual ? 'Cerrar' : 'Despues'],
+    defaultId: 0,
+    cancelId: 2
+  });
+  if (result.response === 1) {
+    await shell.openExternal(updateInfo.url);
+    return;
+  }
+  if (result.response !== 0) return;
+  const progress = await dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: 'Descargando actualizacion',
+    message: 'Se descargara el instalador. La app seguira funcionando durante la descarga.',
+    buttons: ['Continuar'],
+    defaultId: 0
+  });
+  if (progress.response !== 0) return;
+  const installerPath = await downloadUpdateInstaller(updateInfo);
+  await promptInstallDownloadedUpdate(updateInfo, installerPath);
+}
+
+async function checkForInstallerUpdate({ manual = false } = {}) {
+  if (process.platform !== 'win32') {
+    if (manual) {
+      await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'Actualizaciones asistidas',
+        message: 'El actualizador asistido esta habilitado para instalaciones Windows.'
+      });
+    }
+    return null;
+  }
+  if (updateCheckInFlight) return updateCheckInFlight;
+  updateCheckInFlight = (async () => {
+    try {
+      const manifest = await fetchUpdateManifest();
+      const updateInfo = normalizeUpdateInfo(manifest);
+      if (!updateInfo.version) {
+        throw new Error('El manifiesto de actualizacion no tiene version.');
+      }
+      if (compareVersions(updateInfo.version, currentAppVersion()) <= 0) {
+        if (manual) {
+          await dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: 'EOLO Access Bridge actualizado',
+            message: `Ya tienes la version mas reciente (${currentAppVersion()}).`
+          });
+        }
+        return null;
+      }
+      if (!updateInfo.url) {
+        throw new Error('El manifiesto de actualizacion no tiene URL de instalador.');
+      }
+      await offerInstallerUpdate(updateInfo, { manual });
+      return updateInfo;
+    } catch (error) {
+      if (manual) {
+        await dialog.showMessageBox(mainWindow, {
+          type: 'error',
+          title: 'No se pudo buscar actualizaciones',
+          message: error?.message || String(error),
+          detail: `Manifiesto: ${updateManifestUrl()}`
+        });
+      } else {
+        console.warn('No se pudo buscar actualizaciones', error);
+      }
+      return null;
+    } finally {
+      updateCheckInFlight = null;
+    }
+  })();
+  return updateCheckInFlight;
+}
+
+function startUpdateChecks() {
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
+  if (!updateManifestUrl()) return;
+  setTimeout(() => checkForInstallerUpdate({ manual: false }).catch(() => {}), 15000);
+  updateCheckTimer = setInterval(
+    () => checkForInstallerUpdate({ manual: false }).catch(() => {}),
+    UPDATE_CHECK_INTERVAL_MS
+  );
 }
 
 function createWindow() {
@@ -365,6 +671,7 @@ async function boot() {
     await waitForBridge(bridgeContext.baseUrl);
     buildApplicationMenu();
     createWindow();
+    startUpdateChecks();
   } catch (error) {
     await dialog.showMessageBox({
       type: 'error',
@@ -400,6 +707,7 @@ app.on('before-quit', (event) => {
 });
 
 app.on('will-quit', () => {
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (anprProcess && anprProcess.exitCode === null && !anprProcess.killed) {
     stopAnprSidecar({ force: true }).catch(() => {});
   }

@@ -1967,6 +1967,11 @@ input.locked-field {
   gap: 10px;
 }
 
+.stream-camera-card.active .stream-camera-frame {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(7, 71, 255, 0.16);
+}
+
 .stream-camera-frame {
   position: relative;
   min-height: 180px;
@@ -2001,6 +2006,35 @@ input.locked-field {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
   pointer-events: none;
   backdrop-filter: blur(8px);
+}
+
+button.stream-camera-label {
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  pointer-events: auto;
+  text-align: left;
+}
+
+button.stream-camera-label:hover,
+button.stream-camera-label:focus-visible {
+  border-color: rgba(255, 255, 255, 0.5);
+  outline: none;
+}
+
+.stream-camera-card.active .stream-camera-label {
+  border-color: rgba(7, 71, 255, 0.38);
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--blue);
+}
+
+.stream-camera-card.active .stream-camera-label strong {
+  color: var(--blue);
+}
+
+.stream-camera-card.active .stream-camera-label span {
+  border-left-color: rgba(7, 71, 255, 0.18);
+  color: #174ea6;
 }
 
 .stream-camera-label strong {
@@ -3256,8 +3290,8 @@ tbody tr:hover {
 }
 
 #vehiclePhotoActions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  justify-content: flex-end;
   align-items: center;
   gap: 6px;
 }
@@ -3269,6 +3303,18 @@ tbody tr:hover {
   font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+#vehiclePhotoActions .vehicle-camera-snapshot-btn {
+  width: 34px;
+  min-width: 34px;
+  min-height: 32px;
+  padding: 0;
+}
+
+#vehiclePhotoActions .vehicle-camera-snapshot-btn .ui-icon {
+  width: 17px;
+  height: 17px;
 }
 
 #vehiclePhotoActions .danger {

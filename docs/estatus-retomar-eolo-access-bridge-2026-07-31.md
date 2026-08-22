@@ -1423,6 +1423,21 @@ Se completo una primera variante all-in-one para macOS ARM64:
   - WebRTC/go2rtc desde el endpoint local del Bridge;
   - sidecar ANPR.
 
+### Actualizador asistido Windows
+
+Se implemento un flujo estable para pilotos Windows sin requerir firma/canal automatico completo:
+
+- Electron consulta un manifiesto JSON remoto al iniciar y luego cada 6 horas.
+- El menu `EOLO Access Bridge > Buscar actualizaciones` fuerza la consulta manual.
+- URL default del manifiesto:
+  - `https://raw.githubusercontent.com/joqr231210/EOLO-Access-Bridge/main/updates/windows-latest.json`
+- La variable `EOLO_DESKTOP_UPDATE_MANIFEST_URL` permite usar otro manifiesto para pilotos privados.
+- Si la version del manifiesto es mayor que `package.json`, se ofrece descargar el instalador.
+- Si el manifiesto trae `sha256`, la descarga se valida antes de permitir instalar.
+- En Windows, al elegir instalar, se crea un `.cmd` temporal que espera a que la app cierre y despues abre el instalador, evitando actualizar sobre procesos ANPR/Bridge vivos.
+- Se agrego `scripts/create-windows-update-manifest.mjs` y el comando:
+  - `npm run updates:win-manifest -- "release\\EOLO Access Bridge Setup X.Y.Z.exe" "https://URL-publica/EOLO%20Access%20Bridge%20Setup%20X.Y.Z.exe"`
+
 Archivos nuevos relevantes:
 
 - `desktop/main.cjs`
@@ -1774,3 +1789,20 @@ eoloapp/eolo-access-bridge:0.2.8-all-in-one
 eoloapp/eolo-access-bridge:0.2.8-all-in-one-amd64
 eoloapp/eolo-access-bridge:all-in-one-latest
 ```
+
+## Actualizacion 2026-08-22 - Operador, camaras y actualizador Windows v0.2.9
+
+Version local visible en login: `v0.2.9`.
+
+Correcciones y mejoras incluidas:
+
+- Se agrego captura manual de foto de vehiculo desde la camara activa, incluso cuando no hay placa leida por ANPR.
+- La captura manual aplica tanto a foto de entrada como a foto de salida, segun el tab activo del grupo de imagen de vehiculo.
+- Al egresar un movimiento, la imagen de salida se persiste localmente y se envia a EOLO Cloud mediante el workflow de egreso; si hace falta, se aplica fallback por Data API.
+- En configuraciones con varias camaras, el operador puede seleccionar una camara activa; el atajo `Enter` usa el tipo de esa camara seleccionada para entrada o salida.
+- Se agrego actualizador asistido para la version instalable Windows: consulta manifiesto remoto, descarga instalador, valida SHA-256 cuando exista y ejecuta el setup al cerrar la app.
+- Se agrego el script `scripts/create-windows-update-manifest.mjs` para generar `updates/windows-latest.json` a partir del instalador Windows publicado.
+
+Nota de publicacion:
+
+- `updates/windows-latest.json` se mantiene apuntando a `0.2.8` hasta que exista el instalador Windows `0.2.9` en una URL publica. Esto evita mostrar una actualizacion que todavia no puede descargarse.

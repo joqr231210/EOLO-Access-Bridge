@@ -1,6 +1,6 @@
 {
   "name": "eolo-access-bridge",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Bridge local EOLO para operar accesos, ANPR, camaras y terminales ISAPI.",
   "author": "EOLO",
   "type": "module",
@@ -17,7 +17,8 @@
     "desktop:mac": "electron-builder --mac dmg --publish never",
     "desktop:win": "electron-builder --win nsis --x64 --publish never",
     "desktop:mac:full": "npm run sidecars:prepare && npm run anpr:build && npm run desktop:mac",
-    "desktop:win:full": "npm run sidecars:prepare && npm run anpr:build:win && npm run desktop:win"
+    "desktop:win:full": "npm run sidecars:prepare && npm run anpr:build:win && npm run desktop:win",
+    "updates:win-manifest": "node scripts/create-windows-update-manifest.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

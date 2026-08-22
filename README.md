@@ -60,13 +60,13 @@ npm run desktop:win:full
 El instalador Windows queda en:
 
 ```text
-release\EOLO Access Bridge Setup 0.2.8.exe
+release\EOLO Access Bridge Setup 0.2.9.exe
 ```
 
 El instalador macOS queda en:
 
 ```text
-release/EOLO Access Bridge-0.2.8-arm64.dmg
+release/EOLO Access Bridge-0.2.9-arm64.dmg
 ```
 
 Notas:
@@ -76,6 +76,39 @@ Notas:
 - Los datos locales quedan fuera de la app instalada:
   - Windows: `%APPDATA%\EOLO Access Bridge`
   - macOS: `~/Library/Application Support/EOLO Access Bridge`
+
+### Actualizaciones Windows asistidas
+
+La app instalable consulta un manifiesto remoto cada 6 horas y tambien desde el menu:
+
+```text
+EOLO Access Bridge > Buscar actualizaciones
+```
+
+Por defecto consulta:
+
+```text
+https://raw.githubusercontent.com/joqr231210/EOLO-Access-Bridge/main/updates/windows-latest.json
+```
+
+Si el manifiesto publica una version mayor, la app ofrece descargar el instalador, valida SHA-256 si viene incluido, y al elegir **Instalar ahora** cierra Bridge/ANPR de forma ordenada antes de abrir el setup.
+
+Para publicar una actualizacion:
+
+```powershell
+npm version patch --no-git-tag-version
+npm run desktop:win:full
+npm run updates:win-manifest -- "release\EOLO Access Bridge Setup X.Y.Z.exe" "https://URL-publica/EOLO%20Access%20Bridge%20Setup%20X.Y.Z.exe"
+git add package.json package-lock.json updates/windows-latest.json
+git commit -m "Release EOLO Access Bridge X.Y.Z"
+git push
+```
+
+En pilotos privados puedes apuntar a otro manifiesto antes de abrir la app:
+
+```powershell
+setx EOLO_DESKTOP_UPDATE_MANIFEST_URL "https://tu-dominio/updates/windows-latest.json"
+```
 
 ## Arranque con Docker
 

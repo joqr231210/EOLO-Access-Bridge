@@ -21,6 +21,7 @@ const state = {
   movementPage: 1,
   movementPageSize: 10,
   movementTotal: 0,
+  inventorySummary: { vehicles: 0, pedestrians: 0 },
   streamCameras: [],
   streamCameraStatus: null,
   anprDetections: {},
@@ -29,6 +30,7 @@ const state = {
   showAnprLogs: localStorage.getItem('eolo.operator.showAnprLogs') !== 'false',
   showStreamTools: localStorage.getItem('eolo.operator.showStreamTools') !== 'false',
   streamInventorySplit: localStorage.getItem('eolo.operator.streamInventorySplit') === 'true',
+  activeStreamCameraName: localStorage.getItem('eolo.operator.activeStreamCameraName') || '',
   visibleStreamCameraCount: 0,
   streamCameraCollapsed: localStorage.getItem('eolo.operator.streamCameraCollapsed') === 'true',
   anprDetectionTimer: null,
@@ -628,6 +630,8 @@ async function selectAccess(index) {
   state.residentSource = '';
   state.selectedResident = null;
   state.pendingMovements = [];
+  state.inventorySummary = { vehicles: 0, pedestrians: 0 };
+  applyInventorySummary(state.inventorySummary);
   renderPendingMovements();
   renderActiveAccessSidebar();
   if (!state.activeAccess) return showAccessPicker();
@@ -795,10 +799,14 @@ async function selectControlPoint(index) {
   if ($('#controlPointDialog').open) $('#controlPointDialog').close();
   renderActiveAccessSidebar();
   showMovements();
-  await loadResidents();
-  await loadStreamCameras();
+  const backgroundLoads = [
+    loadResidents().catch((error) => setMessage($('#movementMessage'), error.message)),
+    loadStreamCameras().catch((error) => setMessage($('#streamCameraSummary'), error.message)),
+    loadInventorySummary().catch((error) => setMessage($('#movementMessage'), error.message)),
+    loadPendingMovements().catch((error) => setMessage($('#pendingSyncSummary'), error.message))
+  ];
   await loadMovements();
-  await loadPendingMovements();
+  await Promise.allSettled(backgroundLoads);
   startAutoSync();
   startPendingSyncTimer();
 }
@@ -818,7 +826,8 @@ async function loadMovements() {
     date_to: new Date().toISOString(),
     limit: String(state.movementPageSize),
     offset: String((state.movementPage - 1) * state.movementPageSize),
-    sort: 'modified_desc'
+    sort: 'modified_desc',
+    include_summary: 'false'
   });
   if (state.activeAccess?.id) query.set('access', state.activeAccess.id);
   if (state.activeControlPoint?.id) query.set('control_point', state.activeControlPoint.id);
@@ -833,6 +842,14 @@ async function loadMovements() {
   renderMovements(result.summary || {});
   renderMovementPagination();
   $('#syncState').textContent = `Ult. Sinc. ${formatSyncDateTime(new Date().toISOString())}`;
+}
+
+async function loadInventorySummary() {
+  if (!state.activeAccess?.id) return state.inventorySummary;
+  const query = new URLSearchParams({ access: state.activeAccess.id });
+  const result = await api(`/api/operator/inventory-summary?${query.toString()}`, { silent: true });
+  applyInventorySummary(result.summary || {});
+  return state.inventorySummary;
 }
 
 async function loadStreamCameras() {
@@ -887,6 +904,7 @@ function renderStreamCameras() {
   const cameras = matchingCameras.length ? matchingCameras : allCameras;
   const running = Boolean(state.streamCameraStatus?.running);
   state.visibleStreamCameraCount = cameras.length;
+  ensureActiveStreamCamera(cameras);
   syncStreamPreferences();
   summary.textContent = cameras.length
     ? ''
@@ -954,18 +972,19 @@ function syncStreamPreferences() {
 }
 
 function renderStreamCameraCard(camera, running) {
+  const isActive = displayText(camera.name) === displayText(state.activeStreamCameraName);
   return `
-    <article class="stream-camera-card">
+    <article class="stream-camera-card ${isActive ? 'active' : ''}" data-stream-camera-card="${escapeHtml(camera.name)}" aria-current="${isActive ? 'true' : 'false'}">
       <div class="stream-camera-frame">
         ${
           running
             ? `<iframe title="Vista ${escapeHtml(camera.name)}" src="${escapeHtml(camera.playerUrl)}" loading="lazy"></iframe>`
             : '<div class="stream-camera-placeholder">Visualizador inactivo</div>'
         }
-        <div class="stream-camera-label">
+        <button class="stream-camera-label" type="button" data-stream-camera-select="${escapeHtml(camera.name)}" aria-pressed="${isActive ? 'true' : 'false'}">
           <strong>${escapeHtml(camera.name)}</strong>
           <span>${escapeHtml(camera.type || 'Camara')}</span>
-        </div>
+        </button>
         <button class="anpr-plate-overlay hidden" type="button" data-anpr-plate="${escapeHtml(camera.name)}" title="Usar esta placa y fotografia">
           <span>PLACA LEIDA</span>
           <strong>---</strong>
@@ -976,6 +995,26 @@ function renderStreamCameraCard(camera, running) {
       </div>
     </article>
   `;
+}
+
+function ensureActiveStreamCamera(cameras = []) {
+  const names = cameras.map((camera) => displayText(camera.name)).filter(Boolean);
+  if (!names.length) {
+    state.activeStreamCameraName = '';
+    localStorage.removeItem('eolo.operator.activeStreamCameraName');
+    return;
+  }
+  if (names.includes(displayText(state.activeStreamCameraName))) return;
+  state.activeStreamCameraName = names[0];
+  localStorage.setItem('eolo.operator.activeStreamCameraName', state.activeStreamCameraName);
+}
+
+function setActiveStreamCamera(cameraName) {
+  const name = displayText(cameraName);
+  if (!name || name === state.activeStreamCameraName) return;
+  state.activeStreamCameraName = name;
+  localStorage.setItem('eolo.operator.activeStreamCameraName', name);
+  renderStreamCameras();
 }
 
 async function toggleStreamPreview(enabled) {
@@ -1123,10 +1162,11 @@ function visibleStreamCameraNames() {
   return allowedNames;
 }
 
-function latestFreshAnprCamera({ type = 'any' } = {}) {
+function latestFreshAnprCamera({ type = 'any', cameraName = '' } = {}) {
   if (!state.streamCameraStatus?.running) return null;
   const now = Date.now();
   const allowedNames = visibleStreamCameraNames();
+  const selectedCameraName = displayText(cameraName);
   return Object.entries(state.anprDetections || {})
     .map(([cameraName, detection]) => {
       const detectedAt = Number(detection?.detected_at_ms || Date.parse(detection?.detected_at || ''));
@@ -1138,12 +1178,50 @@ function latestFreshAnprCamera({ type = 'any' } = {}) {
     })
     .filter((item) => {
       if (!item.plate || !Number.isFinite(item.detectedAt) || now - item.detectedAt > 30000) return false;
+      if (selectedCameraName && item.cameraName !== selectedCameraName) return false;
       if (allowedNames.size && !allowedNames.has(item.cameraName)) return false;
       if (type === 'entry') return isEntryCamera(item.cameraName);
       if (type === 'exit') return isExitCamera(item.cameraName);
       return isEntryCamera(item.cameraName) || isExitCamera(item.cameraName);
     })
     .sort((a, b) => b.detectedAt - a.detectedAt)[0] || null;
+}
+
+function preferredVehiclePhotoCameraName(view = state.vehiclePhotoView || 'entry') {
+  const type = view === 'exit' ? 'exit' : 'entry';
+  const activeCameraName = displayText(state.activeStreamCameraName);
+  if (activeCameraName && (type === 'exit' ? isExitCamera(activeCameraName) : isEntryCamera(activeCameraName))) {
+    return activeCameraName;
+  }
+  const freshDetection = latestFreshAnprCamera({ type });
+  if (freshDetection?.cameraName) return freshDetection.cameraName;
+
+  const explicitControlCamera = type === 'exit'
+    ? state.activeControlPoint?.exitCamera
+    : state.activeControlPoint?.entryCamera;
+  if (displayText(explicitControlCamera)) return displayText(explicitControlCamera);
+
+  const matchesType = (camera) => {
+    const name = displayText(camera?.name || camera);
+    if (!name) return false;
+    return type === 'exit' ? isExitCamera(name) : isEntryCamera(name);
+  };
+  const streamMatch = (state.streamCameras || []).find(matchesType);
+  if (streamMatch?.name) return displayText(streamMatch.name);
+
+  const controlMatch = (state.activeControlPoint?.cameras || []).find(matchesType);
+  if (controlMatch?.name) return displayText(controlMatch.name);
+
+  const allowedNames = visibleStreamCameraNames();
+  const allowedStreamCamera = (state.streamCameras || []).find((camera) => allowedNames.has(displayText(camera.name)));
+  if (allowedStreamCamera?.name) return displayText(allowedStreamCamera.name);
+
+  return displayText(
+    state.streamCameras?.[0]?.name ||
+    state.activeControlPoint?.cameras?.[0]?.name ||
+    state.activeAccess?.cameras?.[0]?.name ||
+    ''
+  );
 }
 
 function isIngresadoMovement(movement) {
@@ -1244,9 +1322,21 @@ async function handleMovementPanelEnter(event) {
   const target = event.target;
   if (target?.closest?.('input, select, button, a')) return;
   event.preventDefault();
-  const detection = latestFreshAnprCamera();
+  const activeCameraName = displayText(state.activeStreamCameraName);
+  const activeCameraType = activeCameraName && isExitCamera(activeCameraName) ? 'exit' : 'entry';
+  const detection = activeCameraName
+    ? latestFreshAnprCamera({ cameraName: activeCameraName, type: activeCameraType })
+    : latestFreshAnprCamera();
   if (detection?.cameraName) {
     await useAnprPlateForMovement(detection.cameraName);
+    return;
+  }
+  if (activeCameraName && activeCameraType === 'exit') {
+    showToast({
+      type: 'info',
+      title: 'Sin placa de salida',
+      message: `La cámara activa ${activeCameraName} no tiene una placa reciente para buscar egreso.`
+    });
     return;
   }
   openMovementDialog(null, { focusPlate: true });
@@ -2086,11 +2176,23 @@ function movementArea(movement) {
   return displayText(movement?.area) || displayText(resident?.area) || displayText(resident?.company) || 'N/A';
 }
 
+function applyInventorySummary(summary = {}) {
+  state.inventorySummary = {
+    vehicles: Number(summary.vehicles ?? state.inventorySummary?.vehicles ?? 0) || 0,
+    pedestrians: Number(summary.pedestrians ?? state.inventorySummary?.pedestrians ?? 0) || 0
+  };
+  $('#vehicleInventory').textContent = state.inventorySummary.vehicles;
+  $('#pedestrianInventory').textContent = state.inventorySummary.pedestrians;
+  $('#vehicleVisitsBadge').textContent = `${state.inventorySummary.vehicles} Visitas`;
+  $('#pedestrianVisitsBadge').textContent = `${state.inventorySummary.pedestrians} Visitas`;
+}
+
 function renderMovements(summary) {
-  $('#vehicleInventory').textContent = summary.vehicles ?? 0;
-  $('#pedestrianInventory').textContent = summary.pedestrians ?? 0;
-  $('#vehicleVisitsBadge').textContent = `${summary.vehicles ?? 0} Visitas`;
-  $('#pedestrianVisitsBadge').textContent = `${summary.pedestrians ?? 0} Visitas`;
+  if (summary && (summary.vehicles !== undefined || summary.pedestrians !== undefined)) {
+    applyInventorySummary(summary);
+  } else {
+    applyInventorySummary(state.inventorySummary);
+  }
 
   const rows = $('#movementRows');
   rows.innerHTML = state.movements
@@ -2220,10 +2322,9 @@ function openMovementDialog(movement = null, { focusPlate = false, focusAction =
   $('#retakeIdPhotoBtn').classList.toggle('hidden', !canChangeIdentification || !hasIdentificationPhoto);
   $('#removeIdPhotoBtn').classList.toggle('hidden', !canChangeIdentification || !hasIdentificationPhoto);
   $$('#vehiclePhotoActions button').forEach((button) => {
-    button.disabled = Boolean(movement);
+    button.disabled = !canEditVehiclePhoto();
   });
-  $('#changeVehiclePhotoFromCameraBtn').classList.toggle('hidden', Boolean(movement));
-  $('#removeVehiclePhotoBtn').classList.toggle('hidden', Boolean(movement) || !state.vehiclePhotoDataUrl);
+  renderVehiclePhoto();
   $('#visitorIdCameraBtn').disabled = !canChangeIdentification;
   $('#driverOverlayBtn').disabled = Boolean(movement);
   updateKindFields();
@@ -2256,11 +2357,21 @@ function closeMovementDialog() {
   $('#movementDialog').close();
 }
 
+function movementCanExit(movement = state.selectedMovement) {
+  if (!movement) return false;
+  return Boolean(movement.can_exit) || displayText(movement.status) === 'Ingresado';
+}
+
+function canEditVehiclePhoto(view = state.vehiclePhotoView || 'entry') {
+  if (!state.selectedMovement) return true;
+  return view === 'exit' && movementCanExit(state.selectedMovement);
+}
+
 function updateMovementActions(movement) {
   const saveButton = $('#saveMovementBtn');
   const egressButton = $('#egressBtn');
   const status = displayText(movement?.status);
-  const canExit = Boolean(movement?.can_exit) || status === 'Ingresado';
+  const canExit = movementCanExit(movement);
   saveButton.classList.remove('hidden');
   egressButton.classList.toggle('hidden', !canExit);
   saveButton.disabled = false;
@@ -2371,7 +2482,7 @@ function renderMovementHistory(movement) {
 function renderMovementAssets(movement) {
   state.vehiclePhotoDataUrl = '';
   state.vehicleExitPhotoDataUrl = '';
-  state.vehiclePhotoView = 'entry';
+  state.vehiclePhotoView = movementCanExit(movement) ? 'exit' : 'entry';
   $('#vehiclePhotoDataUrl').value = '';
   $('#vehicleExitPhotoDataUrl').value = '';
   renderVehiclePhoto();
@@ -2454,8 +2565,15 @@ function renderVehiclePhoto(url = '') {
   $('#vehiclePhotoDataUrl').value = state.vehiclePhotoDataUrl || '';
   $('#vehicleExitPhotoDataUrl').value = state.vehicleExitPhotoDataUrl || '';
   const hasEditablePhoto = isExit ? Boolean(state.vehicleExitPhotoDataUrl) : Boolean(state.vehiclePhotoDataUrl);
-  $('#removeVehiclePhotoBtn').classList.toggle('hidden', !hasEditablePhoto || Boolean(state.selectedMovement));
-  $('#changeVehiclePhotoFromCameraBtn').classList.toggle('hidden', Boolean(state.selectedMovement));
+  const canEditPhoto = canEditVehiclePhoto(state.vehiclePhotoView);
+  $$('#vehiclePhotoActions button').forEach((button) => {
+    button.disabled = !canEditPhoto;
+  });
+  $('#removeVehiclePhotoBtn').classList.toggle('hidden', !hasEditablePhoto || !canEditPhoto);
+  const captureButton = $('#changeVehiclePhotoFromCameraBtn');
+  captureButton.classList.toggle('hidden', !canEditPhoto);
+  captureButton.title = isExit ? 'Tomar foto de salida desde cámara' : 'Tomar foto de entrada desde cámara';
+  captureButton.setAttribute('aria-label', captureButton.title);
 }
 
 function setVehiclePhoto(dataUrl, view = state.vehiclePhotoView || 'entry') {
@@ -2851,16 +2969,45 @@ function removeIdPhoto() {
 }
 
 function removeVehiclePhoto() {
+  if (!canEditVehiclePhoto()) return;
   setVehiclePhoto('');
 }
 
-function changeVehiclePhotoFromCamera() {
-  if ($('#movementDialog').open) closeMovementDialog();
-  showToast({
-    type: 'info',
-    title: 'Selecciona una placa',
-    message: 'Haz clic sobre la placa ANPR en el visualizador para reemplazar la fotografia.'
-  });
+async function changeVehiclePhotoFromCamera() {
+  const view = state.vehiclePhotoView === 'exit' ? 'exit' : 'entry';
+  if (!canEditVehiclePhoto(view)) return;
+  const cameraName = preferredVehiclePhotoCameraName(view);
+  if (!cameraName) {
+    showToast({
+      type: 'error',
+      title: 'Sin cámara activa',
+      message: 'No encontre una camara disponible para tomar la foto del vehiculo.'
+    });
+    return;
+  }
+
+  const button = $('#changeVehiclePhotoFromCameraBtn');
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  try {
+    const blob = await fetchOperatorBlob(`/api/operator/anpr-snapshots/${encodeURIComponent(cameraName)}?t=${Date.now()}`);
+    const dataUrl = await blobToDataUrl(blob);
+    setVehiclePhoto(dataUrl, view);
+    showToast({
+      type: 'success',
+      title: 'Foto capturada',
+      message: `Se tomo la foto ${view === 'exit' ? 'de salida' : 'de entrada'} desde ${cameraName}.`
+    });
+  } catch (error) {
+    showToast({
+      type: 'error',
+      title: 'No se pudo tomar la foto',
+      message: error.message || 'Verifica que el visualizador o el procesador ANPR esten activos.'
+    });
+  } finally {
+    button.removeAttribute('aria-busy');
+    button.disabled = !canEditVehiclePhoto(view);
+  }
 }
 
 function renderMovementDetails(movement) {
@@ -2932,10 +3079,9 @@ function setMovementBusy(isBusy, title = 'Sincronizando con EOLO Cloud') {
     $('#retakeIdPhotoBtn').classList.toggle('hidden', !canChangeIdentification || !hasPhoto);
     $('#removeIdPhotoBtn').classList.toggle('hidden', !canChangeIdentification || !hasPhoto);
     $$('#vehiclePhotoActions button').forEach((button) => {
-      button.disabled = !canChangeIdentification;
+      button.disabled = !canEditVehiclePhoto();
     });
-    $('#changeVehiclePhotoFromCameraBtn').classList.toggle('hidden', !canChangeIdentification);
-    $('#removeVehiclePhotoBtn').classList.toggle('hidden', !canChangeIdentification || !state.vehiclePhotoDataUrl);
+    renderVehiclePhoto();
     $('#visitorIdCameraBtn').disabled = !canChangeIdentification;
     updateKindFields();
     setMovementFieldsReadOnly(Boolean(state.selectedMovement));
@@ -3006,7 +3152,7 @@ async function saveMovement(event) {
       title: state.selectedMovement ? 'Movimiento actualizado' : 'Ingreso registrado',
       message: 'La informacion quedo sincronizada.'
     });
-    await loadMovements();
+    await Promise.all([loadMovements(), loadInventorySummary().catch(() => state.inventorySummary)]);
     setMovementBusy(false);
     setTimeout(closeMovementDialog, 250);
   } catch (error) {
@@ -3047,7 +3193,7 @@ async function egressMovement() {
     dismissToast(loadingToast);
     setMessage($('#movementMessage'), 'Salida registrada.', false);
     showToast({ type: 'success', title: 'Egreso registrado', message: 'La salida quedo sincronizada.' });
-    await loadMovements();
+    await Promise.all([loadMovements(), loadInventorySummary().catch(() => state.inventorySummary)]);
     setMovementBusy(false);
     setTimeout(closeMovementDialog, 250);
   } catch (error) {
@@ -3073,7 +3219,7 @@ async function syncNow() {
         message: syncResult.deviceHeartbeat.error || 'EOLO Cloud no actualizo Ultima Comunicacion.'
       });
     }
-    await loadMovements();
+    await Promise.all([loadMovements(), loadInventorySummary().catch(() => state.inventorySummary)]);
     await loadPendingMovements().catch(() => {});
     refreshCloudStatus().catch(() => {});
   } catch (error) {
@@ -3243,11 +3389,22 @@ function bindEvents() {
       toggleStreamInventoryLayout();
       return;
     }
+    const selectButton = event.target.closest('[data-stream-camera-select]');
+    if (selectButton) {
+      setActiveStreamCamera(selectButton.dataset.streamCameraSelect || '');
+      return;
+    }
     const plateButton = event.target.closest('[data-anpr-plate]');
-    if (!plateButton) return;
-    useAnprPlateForMovement(plateButton.dataset.anprPlate || '').catch((error) => {
-      showToast({ type: 'error', title: 'No se pudo capturar la placa', message: error.message });
-    });
+    if (plateButton) {
+      setActiveStreamCamera(plateButton.dataset.anprPlate || '');
+      useAnprPlateForMovement(plateButton.dataset.anprPlate || '').catch((error) => {
+        showToast({ type: 'error', title: 'No se pudo capturar la placa', message: error.message });
+      });
+      return;
+    }
+    const cameraCard = event.target.closest('[data-stream-camera-card]');
+    if (!cameraCard || event.target.closest('.stream-camera-tools')) return;
+    setActiveStreamCamera(cameraCard.dataset.streamCameraCard || '');
   });
   $('#streamCameraCollapseBtn').addEventListener('click', toggleStreamCameraPanel);
   $('#newMovementBtn').addEventListener('click', () => openMovementDialog(null, { focusPlate: true }));

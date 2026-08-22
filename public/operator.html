@@ -142,7 +142,7 @@
           <img class="login-logo" src="/assets/eolo-logo.png" alt="EOLO" />
           <div>
             <strong>EOLO Access Bridge</strong>
-            <span>v0.2.8</span>
+            <span>v0.2.9</span>
           </div>
         </div>
         <div class="login-signal-grid" id="loginSignalGrid" aria-label="Estado de servicios">
@@ -781,7 +781,9 @@
               <div class="vehicle-photo-panel">
                 <div class="asset-placeholder" id="vehicleImageSlot">Sin Imagen</div>
                 <div class="asset-actions" id="vehiclePhotoActions">
-                  <button class="ghost" type="button" id="changeVehiclePhotoFromCameraBtn">Cambiar desde cámara</button>
+                  <button class="input-icon-button vehicle-camera-snapshot-btn" type="button" id="changeVehiclePhotoFromCameraBtn" title="Tomar foto desde cámara" aria-label="Tomar foto desde cámara">
+                    <svg class="ui-icon" aria-hidden="true"><use href="#icon-camera"></use></svg>
+                  </button>
                   <button class="danger hidden" type="button" id="removeVehiclePhotoBtn">Eliminar</button>
                 </div>
               </div>

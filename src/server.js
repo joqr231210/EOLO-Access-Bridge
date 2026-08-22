@@ -37,6 +37,8 @@ const upload = multer({
 
 const eoloClient = new EoloClient();
 const operatorSessions = new Map();
+const operatorCloudSessionCache = new Map();
+const operatorInventorySummaryCache = new Map();
 let go2rtcProcess = null;
 let device = createDevice();
 let eventStream = createEventStream();
@@ -946,6 +948,11 @@ app.post(
   asyncRoute(async (req, res) => {
     const token = getOperatorToken(req);
     if (token) operatorSessions.delete(token);
+    if (token) {
+      for (const key of operatorCloudSessionCache.keys()) {
+        if (key.startsWith(`${token}:`)) operatorCloudSessionCache.delete(key);
+      }
+    }
     res.json({ ok: true });
   })
 );
@@ -1065,6 +1072,37 @@ app.get(
 );
 
 app.get(
+  '/api/operator/inventory-summary',
+  requireOperatorSession,
+  asyncRoute(async (req, res) => {
+    const accessId = String(req.query.access || req.query.access_id || '').trim();
+    if (!accessId) {
+      const error = new Error('El acceso es obligatorio para consultar inventario.');
+      error.status = 400;
+      throw error;
+    }
+
+    if (config.operator.authMode === 'cloud') {
+      const summary = await fetchOperatorCloudInventorySummary(req.operatorSession, accessId);
+      res.json({
+        ok: true,
+        source: 'cloud',
+        summary
+      });
+      return;
+    }
+
+    const params = new URLSearchParams({ access: accessId, status: 'Ingresado', limit: '100', offset: '0' });
+    const payload = await fetchAnprJson(`/api/operator/movements?${params}`, { timeoutMs: 12000 });
+    res.json({
+      ok: true,
+      source: payload.source || 'local-fallback',
+      summary: payload.summary || summarizeOperatorMovements(payload.movements || [])
+    });
+  })
+);
+
+app.get(
   '/api/operator/movements',
   requireOperatorSession,
   asyncRoute(async (req, res) => {
@@ -1075,6 +1113,7 @@ app.get(
     const limit = movementPageLimit(req.query.limit);
     const offset = movementPageOffset(req.query.offset);
     const sort = String(req.query.sort || 'modified_desc').trim() || 'modified_desc';
+    const includeSummary = String(req.query.include_summary || 'true') !== 'false';
     const hasLocalFilters = Boolean(req.query.search || req.query.status || req.query.kind);
     if (config.operator.authMode === 'cloud' && accessId) {
       const cloudResult = await fetchOperatorCloudMovementsToday(
@@ -1105,14 +1144,16 @@ app.get(
         const cloudWasPaginated =
           !hasLocalFilters && Number.isFinite(cloudTotal) && cloudTotal >= filteredMovements.length;
         const movements = cloudWasPaginated ? filteredMovements : paginateOperatorMovements(filteredMovements, req.query);
-        const summary = await fetchOperatorCloudInventorySummary(req.operatorSession, accessId).catch(async (error) => {
-          await log('warn', 'No se pudo consultar inventario real en EOLO Cloud', {
-            error: error.message,
-            status: error.status,
-            accessId
-          });
-          return summarizeOperatorMovements(filteredMovements);
-        });
+        const summary = includeSummary
+          ? await fetchOperatorCloudInventorySummary(req.operatorSession, accessId).catch(async (error) => {
+              await log('warn', 'No se pudo consultar inventario real en EOLO Cloud', {
+                error: error.message,
+                status: error.status,
+                accessId
+              });
+              return summarizeOperatorMovements(filteredMovements);
+            })
+          : undefined;
         res.json({
           ok: true,
           source: 'cloud',
@@ -1122,7 +1163,7 @@ app.get(
           limit,
           offset,
           sort,
-          summary
+          ...(summary ? { summary } : {})
         });
         return;
       }
@@ -1261,6 +1302,7 @@ app.post(
         return null;
       });
       if (!createdMovement) return;
+      invalidateOperatorInventorySummary(accessId);
       res.status(201).json({
         ok: true,
         source: 'cloud',
@@ -1297,6 +1339,7 @@ app.patch(
         req.params.id,
         req.body
       );
+      invalidateOperatorInventorySummary(String(req.body.access_id || req.body.access || '').trim());
       res.json({
         ok: true,
         source: 'cloud',
@@ -1367,6 +1410,9 @@ app.post(
   asyncRoute(async (req, res) => {
     const force = req.body?.force === true;
     const result = await syncPendingOperatorMovements(req.operatorSession, { force });
+    for (const item of result.synced || []) {
+      invalidateOperatorInventorySummary(item.accessId || item.movement?.accessId || item.movement?.access_id);
+    }
     res.json({ ok: true, ...result });
   })
 );
@@ -1863,13 +1909,26 @@ async function getOperatorSession(req) {
   if (!userId) return null;
   if (expiresAt && Date.parse(expiresAt) <= Date.now()) return null;
 
+  const cacheKey = `${token}:${userId}`;
+  const cached = operatorCloudSessionCache.get(cacheKey);
+  if (cached && cached.validUntil > Date.now()) return cached.session;
+
   const user = await fetchBubbleUser({ token, userId });
-  return {
+  const session = {
     token,
     userId,
     expiresAt: expiresAt || null,
     operator: operatorFromBubbleUser(user, { phone: user['phone number'] })
   };
+  const sessionExpiresAt = expiresAt ? Date.parse(expiresAt) : 0;
+  const maxValidUntil = Number.isFinite(sessionExpiresAt) && sessionExpiresAt > Date.now()
+    ? sessionExpiresAt
+    : Date.now() + 120000;
+  operatorCloudSessionCache.set(cacheKey, {
+    session,
+    validUntil: Math.min(Date.now() + 120000, maxValidUntil)
+  });
+  return session;
 }
 
 async function requireOperatorSession(req, _res, next) {
@@ -2162,6 +2221,42 @@ async function fetchOperatorDataList(session, type, constraints = [], options = 
   return items;
 }
 
+async function fetchOperatorDataPage(session, type, constraints = [], options = {}) {
+  const limit = Math.min(Math.max(Number(options.limit) || 1, 1), 100);
+  const cursor = Number(options.cursor) || 0;
+  const url = withQuery(operatorDataUrl(type), {
+    constraints: JSON.stringify(constraints),
+    cursor,
+    limit,
+    ...(options.sortField ? { sort_field: options.sortField } : {}),
+    ...(options.descending !== undefined ? { descending: Boolean(options.descending) } : {})
+  });
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${session.token}` },
+    signal: AbortSignal.timeout(options.timeoutMs || 12000)
+  });
+  const body = await response.json().catch(async () => ({ raw: await response.text() }));
+  if (!response.ok || body.status === 'error') {
+    const error = new Error(bubbleErrorMessage(body, `No se pudo consultar ${type}.`));
+    error.status = response.status;
+    error.body = body;
+    throw error;
+  }
+  return body?.response || body || {};
+}
+
+async function fetchOperatorDataCount(session, type, constraints = [], options = {}) {
+  const responseBody = await fetchOperatorDataPage(session, type, constraints, {
+    ...options,
+    limit: 1,
+    cursor: 0
+  });
+  const count = Number(responseBody.count || 0);
+  const remaining = Number(responseBody.remaining || 0);
+  const results = Array.isArray(responseBody.results) ? responseBody.results : [];
+  return count + remaining || results.length;
+}
+
 async function fetchOperatorDataItem(session, type, id) {
   const itemId = firstText(id);
   if (!itemId) return null;
@@ -2221,47 +2316,82 @@ async function patchOperatorDataItem(session, type, id, payload = {}) {
 
 async function fetchOperatorCloudInventorySummary(session, accessId) {
   const { start, end } = currentYearDateRange();
-  const constraints = [
+  const cacheKey = `${accessId}:${start.toISOString()}`;
+  const cached = operatorInventorySummaryCache.get(cacheKey);
+  if (cached && cached.validUntil > Date.now()) return cached.summary;
+
+  const openMovementConstraints = [
     { key: 'acceso_custom_accesos', constraint_type: 'equals', value: accessId },
     { key: 'Created Date', constraint_type: 'greater than', value: start.toISOString() },
-    { key: 'Created Date', constraint_type: 'less than', value: end.toISOString() }
+    { key: 'Created Date', constraint_type: 'less than', value: end.toISOString() },
+    { key: 'horasalida_date', constraint_type: 'is_empty' }
   ];
-  let rawMovements = [];
+  const startedAt = Date.now();
   try {
-    rawMovements = await fetchOperatorDataList(session, 'accesomovimiento', constraints, {
+    const rawMovements = await fetchOperatorDataList(session, 'accesomovimiento', openMovementConstraints, {
       limit: 100,
-      maxPages: 250,
+      maxPages: 25,
       sortField: 'Created Date',
       descending: true,
-      timeoutMs: 20000
+      timeoutMs: 12000
     });
+    const summary = summarizeOperatorMovements(
+      normalizeOperatorMovements(rawMovements, accessId).filter((movement) => {
+        const createdAt = parseOperatorDateValue(movement.created_at || movement.fecha_entrada || movement.modified_at);
+        return movement.status === 'Ingresado' && (!createdAt || (createdAt >= start && createdAt < end));
+      })
+    );
+    operatorInventorySummaryCache.set(cacheKey, {
+      summary,
+      validUntil: Date.now() + 60000
+    });
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs > 1500) {
+      await log('info', 'Inventario EOLO Cloud consultado con conteo ligero', {
+        accessId,
+        elapsedMs,
+        vehicles: summary.vehicles,
+        pedestrians: summary.pedestrians
+      });
+    }
+    return summary;
   } catch (error) {
-    await log('warn', 'No se pudo consultar inventario por rango anual; usando consulta por acceso completo', {
+    await log('warn', 'No se pudo consultar inventario por movimientos abiertos; usando pagina reciente', {
       error: error.message,
       status: error.status,
       accessId
     });
-    rawMovements = await fetchOperatorDataList(
-      session,
-      'accesomovimiento',
-      [{ key: 'acceso_custom_accesos', constraint_type: 'equals', value: accessId }],
-      {
-        limit: 100,
-        maxPages: 250,
-        sortField: 'Created Date',
-        descending: true,
-        timeoutMs: 20000
-      }
-    );
   }
-  const movements = normalizeOperatorMovements(
-    rawMovements,
-    accessId
-  ).filter((movement) => {
+
+  const rawMovements = await fetchOperatorDataList(session, 'accesomovimiento', [
+    { key: 'acceso_custom_accesos', constraint_type: 'equals', value: accessId },
+    { key: 'Created Date', constraint_type: 'greater than', value: start.toISOString() },
+    { key: 'Created Date', constraint_type: 'less than', value: end.toISOString() }
+  ], {
+    limit: 100,
+    maxPages: 50,
+    sortField: 'Created Date',
+    descending: true,
+    timeoutMs: 15000
+  });
+  const movements = normalizeOperatorMovements(rawMovements, accessId).filter((movement) => {
     const createdAt = parseOperatorDateValue(movement.created_at || movement.fecha_entrada || movement.modified_at);
     return movement.status === 'Ingresado' && (!createdAt || (createdAt >= start && createdAt < end));
   });
-  return summarizeOperatorMovements(movements);
+  const summary = summarizeOperatorMovements(movements);
+  operatorInventorySummaryCache.set(cacheKey, {
+    summary,
+    validUntil: Date.now() + 30000
+  });
+  return summary;
+}
+
+function invalidateOperatorInventorySummary(accessId) {
+  const id = firstText(accessId);
+  if (!id) return;
+  for (const key of operatorInventorySummaryCache.keys()) {
+    if (key.startsWith(`${id}:`)) operatorInventorySummaryCache.delete(key);
+  }
 }
 
 function currentYearDateRange(now = new Date()) {
@@ -3130,6 +3260,15 @@ async function egressOperatorCloudMovement(session, movementId, payload = {}) {
     error.body = body;
     throw error;
   }
+  if (exitFileUrl) {
+    await persistOperatorExitPhoto(session, movementId, exitFileUrl).catch(async (error) => {
+      await log('warn', 'No se pudo persistir fotografia de salida por Data API', {
+        movementId,
+        error: error.message,
+        status: error.status
+      });
+    });
+  }
   const normalizedMovement = normalizeOperatorMovement(body, accessId);
   if (normalizedMovement) {
     return {
@@ -3149,6 +3288,24 @@ async function egressOperatorCloudMovement(session, movementId, payload = {}) {
     exit_image: exitFileUrl,
     raw: body
   };
+}
+
+async function persistOperatorExitPhoto(session, movementId, exitFileUrl) {
+  const id = firstText(movementId);
+  const fileUrl = firstFileUrl(exitFileUrl);
+  if (!id || !fileUrl) return {};
+  return tryOperatorDataPayloads(
+    (candidate) => patchOperatorDataItem(session, 'accesomovimiento', id, candidate),
+    [
+      { imagen_salida_file: fileUrl },
+      { ImagenVehiculoSalida: fileUrl },
+      { imagen_vehiculo_salida_file: fileUrl },
+      { 'Imagen Salida': fileUrl },
+      { exit_image: fileUrl },
+      { exit_image_url: fileUrl },
+      { vehicle_exit_photo_url: fileUrl }
+    ]
+  );
 }
 
 function pendingOperatorMovementsPath() {
