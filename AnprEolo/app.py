@@ -81,10 +81,22 @@ latest_detections = {}
 status_lock = threading.Lock()
 anpr_status = {}
 stop_flag = threading.Event()  # Flag para detener threads
+last_status_file_error = None
 
 # --- FUNCIONES ---
 def utc_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+def describir_error_archivo(error, file_path, operation):
+    return {
+        "operation": operation,
+        "path": file_path,
+        "directory": os.path.dirname(file_path),
+        "errno": getattr(error, "errno", None),
+        "type": error.__class__.__name__,
+        "message": str(error),
+        "ts": utc_iso(),
+    }
 
 def escribir_json_atomico(file_path, payload):
     tmp_path = f"{file_path}.tmp"
@@ -110,16 +122,30 @@ def guardar_snapshot_camara(camera_name, frame):
     return file_path
 
 def publicar_estado_anpr(camera_name, **fields):
+    global last_status_file_error
     with status_lock:
         current = anpr_status.get(camera_name, {})
         current.update(fields)
         current["camera"] = camera_name
         current["updated_at"] = utc_iso()
+        if last_status_file_error:
+            current["status_file_error"] = last_status_file_error
         anpr_status[camera_name] = current
-        escribir_json_atomico(STATUS_FILE, {
+        payload = {
             "updated_at": current["updated_at"],
             "cameras": anpr_status,
-        })
+        }
+        if last_status_file_error:
+            payload["status_file_error"] = last_status_file_error
+        try:
+            escribir_json_atomico(STATUS_FILE, payload)
+            last_status_file_error = None
+            current.pop("status_file_error", None)
+        except OSError as error:
+            last_status_file_error = describir_error_archivo(error, STATUS_FILE, "write-status")
+            current["status_file_error"] = last_status_file_error
+            anpr_status[camera_name] = current
+            print(f"[ANPR][status-file-error] {json.dumps(last_status_file_error, ensure_ascii=False)}", flush=True)
 
 def publicar_lectura_anpr(camera_name, placa, clase="Desconocido", confidence=0.0):
     now = time.time()

@@ -1,13 +1,15 @@
 # Estatus para retomar - EOLO Access Bridge
 
 Fecha original de corte: 2026-07-31
-Ultima actualizacion: 2026-08-20 16:45 CST
-Proyecto: servicio local EOLO Access Bridge con Hikvision, ANPR y sincronizacion EOLO Cloud
+Ultima actualizacion: 2026-09-01 19:15 CST
+Proyecto: servicio local EOLO Access Bridge con operador, eventos, Peatones, Vehiculos, puertas/barreras, ANPR y sincronizacion EOLO Cloud
 Ruta actual de trabajo:
 
 ```text
 /Users/joqr231210/Documents/EOLO-Access-Bridge
 ```
+
+Nota de vigencia: este documento conserva historial tecnico. Para la superficie visible actual de `/settings` y `/operator`, tomar como referencia principal la seccion `Actualizacion 2026-09-04 - Corte local v0.2.10`.
 
 ## 1. Objetivo actual
 
@@ -1806,3 +1808,409 @@ Correcciones y mejoras incluidas:
 Nota de publicacion:
 
 - `updates/windows-latest.json` se mantiene apuntando a `0.2.8` hasta que exista el instalador Windows `0.2.9` en una URL publica. Esto evita mostrar una actualizacion que todavia no puede descargarse.
+
+## Actualizacion 2026-09-01 - Reorganizacion Operador, Eventos y Ajustes v0.2.9-dev
+
+Version local visible en login: `v0.2.9`.
+
+Este corte documenta los cambios hechos despues de la publicacion funcional `v0.2.9`. El menu tecnico anterior sigue existiendo parcialmente en codigo para compatibilidad, pero la superficie visible se reorganizo para operar por dominio:
+
+- `Eventos`
+- `Peatones`
+- `Vehiculos`
+- `Puertas y Barreras`
+- `Visualizador RTC`
+- `Lectura de Identificaciones`
+- `Sincronizacion`
+- `Logs`
+
+Quedaron ocultos de la navegacion principal los menus tecnicos anteriores:
+
+- `TareasPolling`
+- `Local API ANPR`
+- `Procesador ANPR`
+- `Visualizador Camaras`
+- `Visitas Sync`
+
+### Operador y Eventos
+
+Se reactivo `Movimientos` junto con la nueva seccion `Eventos` en el panel de operador.
+
+`Eventos` funciona como auditoria local de lo que ocurre en el equipo:
+
+- cada deteccion o accion puede registrarse como evento local;
+- los tipos iniciales son `Vehiculo Detectado` y `Operacion de Puerta`;
+- al crear un movimiento desde `Movimientos`, Bridge genera tambien un evento local;
+- el evento guarda contexto del usuario operador, acceso activo, punto de control y datos reconocidos;
+- si el movimiento incluye nombre/persona y placas, el evento queda marcado como reconocido para ambos entes.
+
+La vista de `Eventos` incluye:
+
+- indicador de total de eventos para la fecha/rango seleccionado;
+- indicador `Total eventos reconocidos`;
+- selector de fechas con overlay, presets `Hoy`, `Esta Semana` y `Este Mes`, y boton `OK`;
+- rango maximo ajustable hacia atras de 3 meses;
+- busqueda global local, ordenada de mas reciente a mas antiguo;
+- al buscar, se limpia el filtro de fecha;
+- filtro por objeto identificado: vehiculo o persona.
+
+### Sidebar y acceso activo
+
+En el sidebar del operador:
+
+- se ocultaron los grupos antiguos de `Acceso activo` y `Punto de control activo`;
+- el selector de acceso se abre al dar clic sobre el grupo superior que muestra el logo/nombre de acceso;
+- se agrego separador visual entre el acceso/punto de control y los botones;
+- el boton de regreso en `/settings` ahora dice `Panel de Operador`;
+- `/settings` es accesible desde el menu desplegable del perfil;
+- el login muestra la version local y, cuando no se usa produccion, el branch cloud, por ejemplo `v0.2.9 - test`.
+
+### Peatones
+
+La seccion antes asociada a `Face Recognition` se renombro a `Peatones`.
+
+Primer card:
+
+- titulo: `Peatones`;
+- descriptor: `Administra los servicios y dispositivos locales para reconocer, registrar y administrar peatones.`;
+- LED de streams: gris si no hay streams escuchando y verde con `1 Stream`, `2 Streams`, etc. si hay escuchas activas.
+
+Indicadores:
+
+- `Dispositivos`
+- `Activos`
+- `Peatones`
+- `Rostros`
+- `Tarjetas`
+- `Codigos`
+
+Tabs:
+
+- `Dispositivos`
+- `Permisos`
+
+`Dispositivos` permite administrar multiples lectores faciales locales. Cada dispositivo conserva configuracion propia, prueba de comunicacion, estado de escucha y elegibilidad para sincronizacion. Los tipos soportados por ahora son:
+
+- `Hikvision Mini Moe`
+- `Dahua ASI`
+
+La vista CRUD del dispositivo solo aparece al crear o editar. Mientras se crea/edita, la tabla queda oculta y se muestra un icono de chevron left para volver al listado. Los indicadores de comunicacion y escucha usan LEDs compactos en lugar de checkboxes grandes.
+
+`Permisos` muestra los `PermisoAccesos` peatonales del acceso activo, con busqueda y paginacion local. La columna de rostro se corrigio para tomar en cuenta `ImagenRostro` y alias observados en Bubble.
+
+### Dahua ASI
+
+Se agrego soporte para equipos Dahua ASI/ASI6213S-D usando HTTP CGI con autenticacion Digest cuando el equipo lo requiere.
+
+Capacidades integradas:
+
+- prueba real de comunicacion contra el dispositivo;
+- validacion de respuesta significativa, para evitar falsos positivos con IP incorrecta;
+- lectura/listado de usuarios cuando el dispositivo responde;
+- alta/actualizacion de usuarios;
+- carga de rostro via CGI/FaceInfoManager;
+- escucha de eventos de reconocimiento facial, tarjeta o huella cuando el modelo/firmware lo publica.
+
+Las credenciales requeridas son las credenciales locales del dispositivo, no credenciales EOLO Cloud. En documentacion publica deben quedar como placeholders, no como valores reales de pruebas LAN.
+
+### Vehiculos
+
+Se creo la seccion `Vehiculos`, ubicada debajo de `Peatones`.
+
+Primer card:
+
+- titulo: `Vehiculos`;
+- descriptor: `Administra los servicios y dispositivos locales para reconocer, registrar y administrar vehiculos.`;
+- badge `API ANPR` para indicar estado de la API local;
+- contador de streams RTSP activos;
+- menu desplegable junto a `Actualizar` para iniciar, detener o reiniciar el servicio ANPR.
+
+Indicadores:
+
+- `Dispositivos`
+- `Activos`
+- `Vehiculos`
+- `Placas`
+- `Tarjetas`
+- `Codigos`
+
+Tabs:
+
+- `Dispositivos`
+- `Procesador ANPR`
+- `Permisos`
+
+`Dispositivos` maneja camaras ANPR locales con CRUD inline equivalente al de `Peatones`. La tabla indica si cada camara tiene una barrera asociada.
+
+`Procesador ANPR` concentra ajustes y estado del procesador ANPR, con opcion de guardar configuracion.
+
+`Permisos` muestra `PermisoAccesos` vehiculares del acceso activo, con busqueda y paginacion local. Para vehiculos se muestran columnas relacionadas con placa; para peatones no debe mostrarse columna de placa.
+
+### Puertas y Barreras
+
+El menu `Barreras` se renombro a `Puertas y Barreras` y se ubico debajo de `Vehiculos`.
+
+La vista quedo alineada con la arquitectura visual de `Peatones` y `Vehiculos`:
+
+- primer card con titulo, descriptor y cantidad de barreras asociadas;
+- indicadores visibles solo para `Dispositivos` y `Activos`;
+- tabla y CRUD inline equivalente al resto de secciones;
+- el campo `Tipo` es un dropdown y por ahora solo contiene `Hikvision ISAPI`.
+
+### Visualizador RTC
+
+El menu WebRTC se renombro a `Visualizador RTC` y se ubico despues de `Puertas y Barreras`.
+
+Cambios visibles:
+
+- se quitaron botones duplicados de iniciar/detener/reiniciar dentro del card interno;
+- se quito la leyenda duplicada `anpr stopped`;
+- se retiro el segundo card redundante que repetia el estado del primero.
+
+### Lectura de Identificaciones
+
+Se creo la seccion `Lectura de Identificaciones` dentro de `/settings`.
+
+Permite configurar:
+
+- camara local/browser para captura de identificaciones;
+- API key de OpenAI Vision;
+- modelo y parametros de lectura.
+
+La UI separa visualmente los grupos `Camara` y `Vision` con una linea vertical para evitar confundir campos de dispositivo local con campos de IA.
+
+Regla de API key OpenAI Vision:
+
+- Bubble `Acceso` debe tener el campo texto `AuxKey1`;
+- cuando el Bridge refresca los accesos del operador, cachea en servidor la key `AuxKey1` del acceso sin exponerla completa al navegador;
+- si el acceso activo tiene `AuxKey1`, la lectura de identificacion usa esa key;
+- si el acceso activo no tiene `AuxKey1`, se usa la key local guardada en Ajustes;
+- `/settings > Lectura de Identificaciones` muestra el origen efectivo de la key: `Acceso`, `Local` o `Sin key`.
+
+Endpoints relacionados:
+
+- `GET /api/operator/vision-config`
+- `PUT /api/operator/vision-config`
+- `POST /api/operator/identification/extract-name`
+
+### Sincronizacion
+
+La seccion `Sincronizacion Cloud` se renombro a `Sincronizacion` y quedo con tabs:
+
+- `Cloud`
+- `Permisos`
+- `Dispositivos`
+
+`Cloud` muestra la configuracion general de rama, base URL y endpoint efectivo. La app local ya no debe permitir manipular manualmente todo el URL de workflows en la UI de operador; se deriva a partir de la rama activa (`live`, `test`, `13i8l`, `73hi5` o custom).
+
+`Permisos` permite descargar y revisar `PermisoAccesos` del acceso activo. Tambien funciona como buscador global local sobre todos los permisos descargados, sin importar si son peatonales o vehiculares, y muestra las propiedades completas para auditoria.
+
+`Dispositivos` concentra la sincronizacion automatica hacia lectores faciales:
+
+- acceso configurado;
+- intervalo;
+- token/fallback operativo;
+- estado de ultima descarga;
+- estado de ultima carga;
+- dispositivos elegibles;
+- acciones manuales para crear snapshot, cargar a dispositivos probados o ejecutar ambos pasos.
+
+La sincronizacion queda separada en dos pasos:
+
+1. Descargar permisos desde EOLO Cloud/Bubble.
+2. Aplicar el snapshot a dispositivos faciales locales probados.
+
+### PermisoAccesos en Bubble
+
+Se valido que el tipo Bubble interno es:
+
+```text
+custom.permisoaccesos
+```
+
+Para Bubble Data API el endpoint funcional es:
+
+```text
+permisoaccesos
+```
+
+`custom.permisoaccesos` no funciona como path de Data API. El error observado `Type not found permisoaccesos` se debia a que el Data Type no estaba habilitado para consultar mediante Data API. Al habilitarlo, el nombre anterior `permisoaccesos` volvio a responder.
+
+Campos/alias relevantes normalizados localmente:
+
+- acceso: `Acceso` / `acceso_custom_accesos`
+- tipo de entidad: `TipoEntidad` / `Tipo` / `tipo_option_tipo_transporte`
+- nombre: `NombrePrincipal` / `nombreusuario_text`
+- placa: `PlacaVehiculo` / `placavehiculo_text`
+- QR: `CodigoQR`
+- rostro: `ImagenRostro` / `imangenrostro_image`
+- prefijo: `PermisoPrefijo` / `prefijopermisos_text`
+- usuario: `Usuario` / `usuario_user`
+
+Regla vigente:
+
+- se hace una sola descarga de permisos para el acceso activo;
+- Bridge guarda el snapshot completo en `data/operator-access-permissions.json`;
+- `Peatones`, `Vehiculos` y `Sincronizacion > Permisos` filtran y buscan localmente;
+- `TipoEntidad` define si un permiso se muestra como peatonal o vehicular;
+- si no hay tipo, el fallback operativo lo trata como peatonal/persona;
+- las columnas de indicadores se calculan por campo no vacio, por ejemplo placa marcada si `PlacaVehiculo` existe.
+
+Durante validacion con el acceso activo de pruebas se observaron:
+
+- 11 permisos totales;
+- 6 vehiculares;
+- 4 peatonales;
+- 1 sin tipo, tratado como peatonal/persona por fallback;
+- 6 con placa;
+- 1 con rostro;
+- 11 con QR.
+
+### Snapshot para dispositivos faciales
+
+El snapshot usado para cargar lectores faciales se genera desde `PermisoAccesos`, no desde el workflow viejo de `acceso-residentes`, cuando existe token de operador/sesion valido.
+
+Archivos:
+
+```text
+data/operator-access-permissions.json
+data/eolo-users-snapshot.json
+```
+
+Mapeo hacia dispositivo facial:
+
+- `employeeNo`: Unique ID Bubble del `PermisoAccesos`;
+- `name`: `NombrePrincipal`;
+- `faceUrl`: `ImagenRostro`;
+- `cardNo`: `NumeroTarjeta`, `CodigoQR` o fallback al ID del permiso.
+
+Los permisos vehiculares se omiten del snapshot facial y no cuentan como invalidos. La carga a dispositivo solo se ejecuta para dispositivos habilitados y con `lastTestOk=true`.
+
+Validacion controlada de descarga con token Bearer:
+
+```json
+{
+  "ok": true,
+  "sourceType": "permisoaccesos",
+  "cloudCount": 11,
+  "validCloudCount": 5,
+  "skippedInvalid": 0,
+  "skippedForDeviceCount": 6,
+  "pedestrians": 5,
+  "vehicles": 6,
+  "faces": 1
+}
+```
+
+### Logs
+
+Se agrego menu `Logs` en `/settings`.
+
+La vista incluye:
+
+- card principal con metricas;
+- tabla de logs persistidos, mas nuevo primero;
+- buscador/filtros basicos;
+- detalle de log con chevron left;
+- JSON completo y metadata relevante.
+
+El click sobre el `Ultimo log` superior navega a `/settings > Logs` y abre el detalle exacto del log mas reciente.
+
+Backend:
+
+- `src/logger.js` agrego `getStoredLogs(limit)`;
+- `GET /api/logs?limit=500` lee `data/logs.jsonl`;
+- SSE conserva logs recientes en memoria para actualizacion en vivo.
+
+### Token de operador y sincronizacion automatica
+
+Se corrigio la sincronizacion automatica cada intervalo para que use el token de la sesion activa del operador.
+
+Problema corregido:
+
+- el scheduler podia intentar sincronizar usando el token/telefono de un usuario anterior guardado en configuracion;
+- EOLO Cloud respondia `401 Invalid or expired token` para un usuario que ya no estaba logueado.
+
+Regla actual:
+
+- si hay sesion de operador, se usa su token;
+- una ejecucion manual puede recibir Bearer token para pruebas controladas;
+- la sincronizacion automatica no debe caer al token viejo de configuracion si no hay sesion activa valida.
+
+### Validaciones realizadas en este corte
+
+Comandos ejecutados durante los cambios:
+
+```bash
+node --check src/server.js
+node --check src/eoloUserSync.js
+node --check src/logger.js
+node --check public/app.js
+git diff --check
+```
+
+Validaciones manuales:
+
+- contenedor reiniciado y disponible en `http://localhost:8080/settings`;
+- menu visible con `Peatones`, `Vehiculos`, `Puertas y Barreras`, `Visualizador RTC`, `Lectura de Identificaciones`, `Sincronizacion` y `Logs`;
+- `Sincronizacion > Permisos` muestra 11 permisos locales tras descarga;
+- `Sincronizacion > Dispositivos` muestra dispositivos elegibles segun `enabled` y `lastTestOk`;
+- `GET /api/logs?limit=500` devuelve logs persistidos.
+
+### Pendientes inmediatos
+
+- Probar carga real del snapshot generado desde `PermisoAccesos` contra el dispositivo Dahua local ya validado.
+- Definir politica de retencion/rotacion para `logs.jsonl`, `events.jsonl` y snapshots locales.
+- Subir version nueva de imagen/instalador cuando este corte quede cerrado y QA con dispositivo real pase.
+- Revisar si conviene migrar nombres internos legacy (`eoloUserSync`, `Face Recognition`) a nombres de dominio (`PedestrianSync`, `Peatones`) para reducir confusion futura.
+
+## Actualizacion 2026-09-04 - Vigencia de PermisoAccesos
+
+Se ajusto la descarga de `PermisoAccesos` para evitar traer permisos vencidos desde EOLO Cloud.
+
+Regla aplicada:
+
+- solo se consideran descargables los permisos con `vigenciafinal_date` / `VigenciaFinal` posterior al momento actual;
+- permisos sin `VigenciaFinal` tambien se omiten para evitar registros ambiguos o legacy en dispositivos locales;
+- la consulta Data API agrega constraint `vigenciafinal_date > ahora` junto al constraint de acceso activo;
+- el snapshot local `operator-access-permissions.json` vuelve a filtrar por vigencia antes de guardar y tambien al leerse, como defensa ante snapshots antiguos;
+- el snapshot facial `eolo-users-snapshot.json` se genera solo desde permisos peatonales vigentes.
+
+Intervalos:
+
+- `EOLO_USER_SYNC_INTERVAL_MINUTES` define cada cuantos minutos se descargan permisos y se sincronizan hacia dispositivos faciales; default: 30 minutos, minimo efectivo: 1 minuto.
+- `EOLO_OPERATOR_SYNC_INTERVAL_MINUTES` define el refresco general del panel operador; default: 5 minutos. No controla la descarga de permisos.
+
+UI:
+
+- `Sincronizacion > Permisos` muestra fecha de corte `Vigentes despues de`, total vigente, total consultado y permisos vencidos omitidos cuando el backend los reporta.
+
+## Actualizacion 2026-09-04 - Corte local v0.2.10
+
+Version local visible en login: `v0.2.10`.
+
+Este corte consolida los cambios de la conversacion para preparar nuevo instalador Windows.
+
+Incluido en Bridge local:
+
+- reorganizacion de `/settings` por dominios operativos: `Peatones`, `Vehiculos`, `Puertas y Barreras`, `Visualizador RTC`, `Lectura de Identificaciones`, `Sincronizacion`, `Ajustes Bridge` y `Logs`;
+- soporte multi-dispositivo peatonal con `Hikvision Mini Moe` y `Dahua ASI`;
+- escucha de eventos faciales y creacion de movimientos automaticos con datos de `PermisoAccesos`;
+- sincronizacion de permisos vigentes por `vigenciafinal_date > ahora`;
+- snapshot facial derivado desde permisos peatonales vigentes;
+- tablas y modal de detalle para permisos peatonales y vehiculares;
+- generacion/uso de `ID2` de permisos como identificador local para dispositivos;
+- diagnostico ANPR mas claro para errores de `anpr-status.json` en Windows;
+- uso de OpenAI Vision con API key prioritaria desde `Acceso.AuxKey1`, con fallback a la key local.
+
+Incluido/solicitado en EOLO Cloud via Buildprint `parco / bridge-dev`:
+
+- campo texto `AuxKey1` en `Acceso` para almacenar API key de OpenAI Vision por acceso;
+- flujo/lectura de accesos debe devolver `AuxKey1` al Bridge sin exponerlo publicamente en UI innecesaria;
+- correccion UI de `RE-AgregarPermisoAcceso` para que replique estructura visual de `RE-AgregarResidente`;
+- generacion de QR para permisos donde el payload es exactamente el `ID2` del `PermisoAccesos`.
+
+Versionado:
+
+- `package.json`, `package-lock.json` y version visible del operador quedan en `0.2.10`;
+- `updates/windows-latest.json` permanece apuntando a `0.2.9` hasta que exista el instalador Windows `0.2.10` publicado y el manifiesto pueda generarse con SHA-256 real.

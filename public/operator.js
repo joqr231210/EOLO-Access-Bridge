@@ -1,5 +1,6 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const APP_VERSION_LABEL = 'v0.2.10';
 
 const state = {
   token: localStorage.getItem('eolo.operator.token') || '',
@@ -17,6 +18,11 @@ const state = {
   residentCatalog: [],
   residentSource: '',
   selectedResident: null,
+  events: [],
+  eventSummary: { total: 0, identified: 0, vehicleIdentified: 0, personIdentified: 0 },
+  eventDateStart: '',
+  eventDateEnd: '',
+  eventSearchTimer: null,
   movements: [],
   movementPage: 1,
   movementPageSize: 10,
@@ -133,6 +139,26 @@ function daysAgoKey(days) {
   return localDateKey(date);
 }
 
+function monthsAgoKey(months) {
+  const date = new Date();
+  date.setMonth(date.getMonth() - months);
+  return localDateKey(date);
+}
+
+function weekStartKey() {
+  const date = new Date();
+  const day = date.getDay();
+  const diff = day === 0 ? 6 : day - 1;
+  date.setDate(date.getDate() - diff);
+  return localDateKey(date);
+}
+
+function monthStartKey() {
+  const date = new Date();
+  date.setDate(1);
+  return localDateKey(date);
+}
+
 function formatDateLabel(dateKey) {
   const [year, month, day] = dateKey.split('-').map(Number);
   const label = new Intl.DateTimeFormat('es-MX', {
@@ -142,6 +168,16 @@ function formatDateLabel(dateKey) {
     year: 'numeric'
   }).format(new Date(year, month - 1, day));
   return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function formatShortDate(dateKey) {
+  if (!dateKey) return '';
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Intl.DateTimeFormat('es-MX', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  }).format(new Date(year, month - 1, day));
 }
 
 function parseLocalDate(value) {
@@ -313,8 +349,130 @@ function showOperator() {
   $('#loginScreen').classList.add('hidden');
   $('#operatorShell').classList.remove('hidden');
   $('#dateLabel').textContent = formatDateLabel(todayKey());
+  resetEventDateRange();
   renderOperatorProfile();
   renderActiveAccessSidebar();
+}
+
+function resetEventDateRange() {
+  const today = todayKey();
+  state.eventDateStart = today;
+  state.eventDateEnd = today;
+  syncEventDateInputsFromState();
+  renderEventDateLabel();
+}
+
+function syncEventDateInputsFromState() {
+  const start = $('#eventStartDate');
+  const end = $('#eventEndDate');
+  if (!start || !end) return;
+  const min = monthsAgoKey(3);
+  const max = todayKey();
+  [start, end].forEach((input) => {
+    input.min = min;
+    input.max = max;
+  });
+  start.value = state.eventDateStart || max;
+  end.value = state.eventDateEnd || state.eventDateStart || max;
+}
+
+function clearEventDateRange() {
+  state.eventDateStart = '';
+  state.eventDateEnd = '';
+  syncEventDateInputsFromState();
+  renderEventDateLabel();
+}
+
+function normalizeEventDateInputs(changedInput = null) {
+  const start = $('#eventStartDate');
+  const end = $('#eventEndDate');
+  if (!start || !end || (!start.value && !end.value)) return;
+  const min = monthsAgoKey(3);
+  const max = todayKey();
+  if (start.value && start.value < min) start.value = min;
+  if (end.value && end.value > max) end.value = max;
+  if (start.value && !end.value) end.value = start.value;
+  if (!start.value && end.value) start.value = end.value;
+  if (start.value > end.value) {
+    if (changedInput === end) start.value = end.value;
+    else end.value = start.value;
+  }
+}
+
+function renderEventDateLabel() {
+  const startValue = state.eventDateStart || '';
+  const endValue = state.eventDateEnd || '';
+  const label = $('#eventDateLabel');
+  const range = $('#eventDateRangeLabel');
+  if (!label || !range) return;
+  if (!startValue && !endValue) {
+    label.textContent = 'Todos los registros';
+    range.textContent = 'Busqueda global';
+    return;
+  }
+  if (startValue && startValue === endValue) {
+    label.textContent = startValue === todayKey() ? 'Hoy' : formatDateLabel(startValue);
+    range.textContent = '12:00 am - 11:59 pm';
+    return;
+  }
+  label.textContent = `${formatShortDate(startValue)} - ${formatShortDate(endValue)}`;
+  range.textContent = 'Rango seleccionado';
+}
+
+function setEventDateInputs(startValue, endValue) {
+  const start = $('#eventStartDate');
+  const end = $('#eventEndDate');
+  if (!start || !end) return;
+  start.value = startValue;
+  end.value = endValue;
+  normalizeEventDateInputs(end);
+}
+
+function setEventPeriodPreset(period) {
+  const today = todayKey();
+  if (period === 'week') setEventDateInputs(weekStartKey(), today);
+  else if (period === 'month') setEventDateInputs(monthStartKey(), today);
+  else setEventDateInputs(today, today);
+  $$('[data-event-period]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.eventPeriod === period);
+  });
+}
+
+function openEventDateOverlay() {
+  syncEventDateInputsFromState();
+  const start = $('#eventStartDate')?.value;
+  const end = $('#eventEndDate')?.value;
+  const today = todayKey();
+  const preset = start === today && end === today
+    ? 'today'
+    : start === weekStartKey() && end === today
+      ? 'week'
+      : start === monthStartKey() && end === today
+        ? 'month'
+        : '';
+  $$('[data-event-period]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.eventPeriod === preset);
+  });
+  $('#eventDateOverlay')?.classList.remove('hidden');
+  $('#eventDateTrigger')?.setAttribute('aria-expanded', 'true');
+}
+
+function closeEventDateOverlay() {
+  $('#eventDateOverlay')?.classList.add('hidden');
+  $('#eventDateTrigger')?.setAttribute('aria-expanded', 'false');
+}
+
+async function applyEventDateOverlay() {
+  normalizeEventDateInputs();
+  state.eventDateStart = $('#eventStartDate')?.value || '';
+  state.eventDateEnd = $('#eventEndDate')?.value || state.eventDateStart;
+  if ($('#eventSearch')?.value.trim()) {
+    $('#eventSearch').value = '';
+    $('#clearEventSearchBtn')?.classList.add('hidden');
+  }
+  renderEventDateLabel();
+  closeEventDateOverlay();
+  await loadEvents();
 }
 
 function resetLoginForm() {
@@ -339,12 +497,27 @@ function setLoginSignal(selector, status, label, detail = '') {
   node.title = detail || label;
 }
 
+function updateLoginVersion(operatorConfig = {}) {
+  const node = $('#loginVersionLabel');
+  if (!node) return;
+  const branch = loginCloudBranchLabel(operatorConfig);
+  node.textContent = branch ? `${APP_VERSION_LABEL} - ${branch}` : APP_VERSION_LABEL;
+}
+
+function loginCloudBranchLabel(operatorConfig = {}) {
+  const raw = String(operatorConfig.branchLabel || operatorConfig.appVersion || '').trim();
+  const normalized = raw.replace(/^version-/, '').toLowerCase();
+  if (!normalized || ['live', 'produccion', 'producción', 'production'].includes(normalized)) return '';
+  return normalized;
+}
+
 async function refreshLoginSignals() {
   setLoginSignal('#loginBridgeSignal', 'checking', 'Bridge local', 'Consultando Bridge local...');
   setLoginSignal('#loginCloudSignal', 'checking', 'EOLO Cloud', 'Consultando EOLO Cloud...');
   setLoginSignal('#loginAnprSignal', 'checking', 'ANPR', 'Consultando API ANPR...');
   try {
     const result = await api('/api/operator/login-status', { silent: true });
+    updateLoginVersion(result.operator);
     setLoginSignal(
       '#loginBridgeSignal',
       'online',
@@ -493,6 +666,8 @@ async function loadAccesses() {
   state.residentCatalog = [];
   state.residentSource = '';
   state.selectedResident = null;
+  state.events = [];
+  state.eventSummary = { total: 0, identified: 0, vehicleIdentified: 0, personIdentified: 0 };
   state.pendingMovements = [];
   renderAccesses();
   renderPendingMovements();
@@ -623,6 +798,13 @@ function renderOperatorProfile() {
 
 async function selectAccess(index) {
   state.activeAccess = state.accesses[index] || null;
+  if (state.activeAccess?.id) {
+    localStorage.setItem('eolo.operator.activeAccessId', state.activeAccess.id);
+    localStorage.setItem('eolo.operator.activeAccessName', state.activeAccess.name || state.activeAccess.id);
+  } else {
+    localStorage.removeItem('eolo.operator.activeAccessId');
+    localStorage.removeItem('eolo.operator.activeAccessName');
+  }
   state.activeControlPoint = null;
   state.controlPoints = [];
   state.residents = [];
@@ -635,6 +817,7 @@ async function selectAccess(index) {
   renderPendingMovements();
   renderActiveAccessSidebar();
   if (!state.activeAccess) return showAccessPicker();
+  await loadOperatorVisionConfig().catch((error) => setMessage($('#visionConfigMessage'), error.message));
   await loadControlPoints();
   showMovementsShell();
   openControlPointDialog({ required: true });
@@ -644,6 +827,7 @@ function showAccessPicker(options = {}) {
   stopSettingsCamera();
   stopIdCamera();
   stopAnprDetectionTimer();
+  closeEventDateOverlay();
   if (options.clearControlPoint) {
     state.activeControlPoint = null;
     state.controlPoints = [];
@@ -654,6 +838,7 @@ function showAccessPicker(options = {}) {
   $('#accessPickerView').classList.remove('hidden');
   $('#controlPointPickerView').classList.add('hidden');
   $('#movementsView').classList.add('hidden');
+  $('#eventsView').classList.add('hidden');
   $('#settingsView').classList.add('hidden');
   renderActiveAccessSidebar();
 }
@@ -662,11 +847,13 @@ function showControlPointPicker() {
   stopSettingsCamera();
   stopIdCamera();
   stopAnprDetectionTimer();
+  closeEventDateOverlay();
   stopAutoSync();
   stopPendingSyncTimer();
   $('#accessPickerView').classList.add('hidden');
   $('#controlPointPickerView').classList.remove('hidden');
   $('#movementsView').classList.add('hidden');
+  $('#eventsView').classList.add('hidden');
   $('#settingsView').classList.add('hidden');
   $('#controlPointAccessName').textContent = state.activeAccess?.name || 'Selecciona acceso';
   renderActiveAccessSidebar();
@@ -674,9 +861,11 @@ function showControlPointPicker() {
 
 function showMovementsShell() {
   stopSettingsCamera();
+  closeEventDateOverlay();
   $('#accessPickerView').classList.add('hidden');
   $('#controlPointPickerView').classList.add('hidden');
   $('#movementsView').classList.remove('hidden');
+  $('#eventsView').classList.add('hidden');
   $('#settingsView').classList.add('hidden');
   setActiveNav('movements');
   renderActiveAccessSidebar();
@@ -688,12 +877,28 @@ function showMovements() {
   startAnprDetectionTimer();
 }
 
-function showSettings() {
+async function showEvents() {
+  stopSettingsCamera();
   stopIdCamera();
   stopAnprDetectionTimer();
   $('#accessPickerView').classList.add('hidden');
   $('#controlPointPickerView').classList.add('hidden');
   $('#movementsView').classList.add('hidden');
+  $('#eventsView').classList.remove('hidden');
+  $('#settingsView').classList.add('hidden');
+  setActiveNav('events');
+  renderActiveAccessSidebar();
+  await loadEvents();
+}
+
+function showSettings() {
+  stopIdCamera();
+  stopAnprDetectionTimer();
+  closeEventDateOverlay();
+  $('#accessPickerView').classList.add('hidden');
+  $('#controlPointPickerView').classList.add('hidden');
+  $('#movementsView').classList.add('hidden');
+  $('#eventsView').classList.add('hidden');
   $('#settingsView').classList.remove('hidden');
   setActiveNav('settings');
   renderActiveAccessSidebar();
@@ -850,6 +1055,31 @@ async function loadInventorySummary() {
   const result = await api(`/api/operator/inventory-summary?${query.toString()}`, { silent: true });
   applyInventorySummary(result.summary || {});
   return state.inventorySummary;
+}
+
+async function loadEvents() {
+  const query = new URLSearchParams({ limit: '1000' });
+  const search = $('#eventSearch')?.value.trim();
+  const objectType = $('#eventObjectFilter')?.value || '';
+  if (search) {
+    query.set('search', search);
+  } else {
+    const start = state.eventDateStart || '';
+    const end = state.eventDateEnd || '';
+    if (start) query.set('start', start);
+    if (end) query.set('end', end);
+  }
+  if (objectType) query.set('object_type', objectType);
+  const result = await api(`/api/events?${query.toString()}`);
+  state.events = result.events || [];
+  state.eventSummary = result.summary || {
+    total: result.total || state.events.length,
+    identified: 0,
+    vehicleIdentified: 0,
+    personIdentified: 0
+  };
+  renderEvents();
+  $('#eventSyncState').textContent = `Ult. Sinc. ${formatSyncDateTime(new Date().toISOString())}`;
 }
 
 async function loadStreamCameras() {
@@ -2227,6 +2457,45 @@ function renderMovements(summary) {
   $('#emptyState').hidden = state.movements.length > 0;
 }
 
+function renderEvents() {
+  const rows = $('#eventRows');
+  if (!rows) return;
+  const events = [...(state.events || [])].sort((a, b) => {
+    const bDate = parseLocalDate(b.timestamp || b.receivedAt);
+    const aDate = parseLocalDate(a.timestamp || a.receivedAt);
+    return (bDate?.getTime() || 0) - (aDate?.getTime() || 0);
+  });
+  const summary = state.eventSummary || {};
+  $('#eventTotal').textContent = Number(summary.total ?? events.length) || 0;
+  $('#eventIdentifiedTotal').textContent = Number(summary.identified || 0);
+  $('#eventSourceBadge').textContent = 'Local';
+  $('#clearEventSearchBtn')?.classList.toggle('hidden', !$('#eventSearch')?.value.trim());
+  renderEventDateLabel();
+  rows.innerHTML = events
+    .map((event) => `
+      <tr>
+        <td>
+          ${escapeHtml(formatSyncDateTime(event.timestamp || event.receivedAt))}
+          <span class="subtle">${escapeHtml(formatLongDate(event.timestamp || event.receivedAt))}</span>
+        </td>
+        <td>${escapeHtml(event.type || 'Evento')}</td>
+        <td>
+          <span class="event-object-pill ${event.hasVehicle ? 'vehicle' : event.hasPerson ? 'person' : ''}">
+            ${escapeHtml(event.objectType || 'No identificado')}
+          </span>
+        </td>
+        <td>${escapeHtml(event.identifiedValue || 'N/A')}</td>
+        <td>
+          ${escapeHtml(event.camera || event.device || 'N/A')}
+          <span class="subtle">${escapeHtml(event.device && event.device !== event.camera ? event.device : '')}</span>
+        </td>
+        <td>${escapeHtml(event.detail || 'Registro local')}</td>
+      </tr>
+    `)
+    .join('');
+  $('#eventEmptyState').hidden = events.length > 0;
+}
+
 function focusMovementPlateInput() {
   const input = $('#movementForm')?.elements?.placa;
   if (!input || input.disabled || input.readOnly) return;
@@ -2601,7 +2870,10 @@ function renderIdPhoto(url = state.idPhotoDataUrl) {
 }
 
 async function loadOperatorVisionConfig() {
-  const result = await api('/api/operator/vision-config');
+  const query = new URLSearchParams();
+  if (state.activeAccess?.id) query.set('access_id', state.activeAccess.id);
+  const suffix = query.toString() ? `?${query}` : '';
+  const result = await api(`/api/operator/vision-config${suffix}`);
   state.visionConfig = result.openaiVision || {};
   renderVisionConfig();
   return state.visionConfig;
@@ -2631,8 +2903,8 @@ function syncVisionControls() {
     ? 'API key de OpenAI'
     : 'API key guardada; activa cambiar para reemplazarla';
   $('#visionKeyHint').textContent = hasSavedKey
-    ? 'La API key guardada se conserva si no activas el cambio.'
-    : 'No hay API key guardada; captura una antes de activar Vision.';
+    ? `La API key guardada se conserva si no activas el cambio. Origen efectivo: ${cfg.effectiveApiKeyLabel || 'Local'}.`
+    : `No hay API key local guardada. Origen efectivo: ${cfg.effectiveApiKeyLabel || 'Sin key'}.`;
 }
 
 async function saveVisionConfig() {
@@ -2748,7 +3020,10 @@ async function extractVisitorNameFromIdPhoto() {
   try {
     const result = await api('/api/operator/identification/extract-name', {
       method: 'POST',
-      body: JSON.stringify({ imageDataUrl: state.idPhotoDataUrl }),
+      body: JSON.stringify({
+        imageDataUrl: state.idPhotoDataUrl,
+        access_id: state.activeAccess?.id || ''
+      }),
       signal: timeout.signal,
       silent: true
     });
@@ -3270,7 +3545,7 @@ function bindEvents() {
   $$('[data-menu-settings]').forEach((button) => {
     button.addEventListener('click', () => {
       $$('[data-profile-menu]').forEach((menu) => menu.classList.remove('open'));
-      showSettings();
+      window.location.assign('/settings');
     });
   });
   $$('[data-open-technical-settings]').forEach((button) => {
@@ -3290,6 +3565,7 @@ function bindEvents() {
   $('#refreshAccessesBtn').addEventListener('click', () => loadAccesses().catch((error) => {
     $('#accessSourceState').textContent = error.message;
   }));
+  $('#activeAccessBrandBtn')?.addEventListener('click', () => showAccessPicker({ clearControlPoint: true }));
   $('#activeAccessBtn').addEventListener('click', () => showAccessPicker({ clearControlPoint: true }));
   $('#activeControlPointBtn').addEventListener('click', openControlPointDialog);
   $$('[data-view]').forEach((button) => {
@@ -3297,7 +3573,62 @@ function bindEvents() {
       if (!state.activeControlPoint) return;
       if (button.dataset.view === 'settings') showSettings();
       if (button.dataset.view === 'movements') showMovements();
+      if (button.dataset.view === 'events') {
+        showEvents().catch((error) => {
+          $('#eventSyncState').textContent = error.message;
+        });
+      }
     });
+  });
+  $('#refreshEventsBtn')?.addEventListener('click', () => loadEvents().catch((error) => {
+    $('#eventSyncState').textContent = error.message;
+  }));
+  $('#eventSearch')?.addEventListener('input', () => {
+    $('#clearEventSearchBtn')?.classList.toggle('hidden', !$('#eventSearch').value.trim());
+    if ($('#eventSearch').value.trim()) clearEventDateRange();
+    clearTimeout(state.eventSearchTimer);
+    state.eventSearchTimer = setTimeout(() => {
+      loadEvents().catch((error) => {
+        $('#eventSyncState').textContent = error.message;
+      });
+    }, 250);
+  });
+  $('#clearEventSearchBtn')?.addEventListener('click', () => {
+    $('#eventSearch').value = '';
+    resetEventDateRange();
+    loadEvents().catch((error) => {
+      $('#eventSyncState').textContent = error.message;
+    });
+  });
+  $('#eventObjectFilter')?.addEventListener('change', () => {
+    loadEvents().catch((error) => {
+      $('#eventSyncState').textContent = error.message;
+    });
+  });
+  $('#eventDateTrigger')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const overlay = $('#eventDateOverlay');
+    if (overlay?.classList.contains('hidden')) openEventDateOverlay();
+    else closeEventDateOverlay();
+  });
+  $$('[data-event-period]').forEach((button) => {
+    button.addEventListener('click', () => setEventPeriodPreset(button.dataset.eventPeriod));
+  });
+  $('#cancelEventDateBtn')?.addEventListener('click', closeEventDateOverlay);
+  $('#applyEventDateBtn')?.addEventListener('click', () => {
+    applyEventDateOverlay().catch((error) => {
+      $('#eventSyncState').textContent = error.message;
+    });
+  });
+  ['#eventStartDate', '#eventEndDate'].forEach((selector) => {
+    $(selector)?.addEventListener('change', (event) => {
+      normalizeEventDateInputs(event.target);
+      $$('[data-event-period]').forEach((button) => button.classList.remove('active'));
+    });
+  });
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('#eventDateOverlay') || event.target.closest('#eventDateTrigger')) return;
+    closeEventDateOverlay();
   });
   $('#backToAccessesBtn').addEventListener('click', () => showAccessPicker({ clearControlPoint: true }));
   $('#refreshControlPointsBtn').addEventListener('click', () => loadControlPoints().catch((error) => {

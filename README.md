@@ -1,32 +1,26 @@
 # EOLO Access Bridge
 
-Servicio local para operar accesos EOLO desde una LAN. Incluye panel de operador, integracion EOLO Cloud, captura local de fotos, ANPR/RTSP y empaquetado instalable con Electron.
+Servicio local para operar accesos EOLO desde una LAN. Incluye panel de operador, integracion EOLO Cloud/Bubble, auditoria local de eventos, lectura de identificaciones, reconocimiento peatonal, ANPR/RTSP, puertas/barreras y empaquetado instalable con Electron.
 
 ## Funciones incluidas
 
-- Alta, modificacion y baja de empleados usando `employeeNo` como llave comun con EOLO.
-- Directorio de empleados mediante `UserInfo/Search`, con edicion, actualizacion de rostro y baja desde modales.
-- Carga de rostro por imagen JPEG/PNG hacia `FDLib/FaceDataRecord`.
-- Multipart facial armado de forma explicita con `FaceDataRecord`, `FaceImage`, boundary y `Content-Length`.
-- Autenticacion Digest fresca por peticion, alineada con el comportamiento de `curl --digest`.
-- JSON de usuario con fechas locales `YYYY-MM-DDTHH:mm:ss`.
-- Lectura continua de eventos desde `alertStream`.
-- Vista Eventos separada en tabs de eventos del dispositivo y logs.
-- Despliegue animado del JSON raw de cada evento desde la vista Eventos para investigacion.
-- Dedupe por `serialNo` y por empleado dentro de una ventana configurable.
-- Visor web en `http://localhost:8080` con estilo tipo ChatGPT.
-- Barra superior con el ultimo log de comunicacion visible en todo momento.
-- Animacion y dot de color en el ultimo log cuando cambia el estado.
-- Clic en el ultimo log para abrir la vista de Logs y posicionar el registro exacto.
-- Los mensajes visibles en Comandos tambien se reflejan en Logs como fuente `UI`.
-- Seccion de empleados separada por tabs para registro y actualizacion de rostro.
-- Configuracion web de IP, puerto, protocolo, usuario, contrasena y parametros ISAPI.
-- Sincronizacion configurable de usuarios EOLO desde `acceso-residentes` hacia empleados Hikvision.
-- IDs locales simples se conservan; IDs sincronizados EOLO usan el `_id` de nube, por ejemplo `1776097830299x944639891097256000`.
-- En cada sincronizacion se eliminan empleados EOLO ausentes en nube, se crean/actualizan los presentes y se actualiza rostro si viene URL.
-- Validacion inmediata contra `GET /ISAPI/System/deviceInfo` al guardar configuracion real.
+- Panel de operador en `http://localhost:8080` para login EOLO, seleccion de acceso/punto de control, movimientos, eventos y ajustes.
+- Seccion `Eventos` para auditoria local de detecciones y operaciones de puerta, con busqueda, rango de fechas, filtros y metricas.
+- Creacion automatica de eventos locales cuando el operador registra movimientos desde el panel de Movimientos.
+- Seccion `Peatones` para administrar dispositivos locales de reconocimiento facial y permisos peatonales descargados desde EOLO Cloud.
+- Soporte multi-dispositivo para lectores faciales `Hikvision Mini Moe` y `Dahua ASI`, cada uno con configuracion, prueba de comunicacion, carga de usuarios y escucha de eventos.
+- Seccion `Vehiculos` para camaras ANPR, permisos vehiculares, estado de API ANPR, streams RTSP activos y ajustes del procesador ANPR.
+- Seccion `Puertas y Barreras` para configurar barreras/puertas locales. El tipo disponible por ahora es `Hikvision ISAPI`.
+- Seccion `Visualizador RTC` para revisar el servicio de visualizacion en tiempo real.
+- Seccion `Lectura de Identificaciones` para elegir camara local y configurar OpenAI Vision para extraer datos de una identificacion. La API key efectiva se resuelve por acceso activo (`Acceso.AuxKey1`) y cae a la key local si el acceso no tiene valor.
+- Seccion `Sincronizacion` con tabs `Cloud`, `Permisos` y `Dispositivos`.
+- Descarga de `PermisoAccesos` via Bubble Data API para el acceso activo, filtrando desde Cloud por `VigenciaFinal` futura y despues localmente por tipo de entidad.
+- Snapshot local de permisos en `data/operator-access-permissions.json`.
+- Snapshot para carga a dispositivos faciales en `data/eolo-users-snapshot.json`, generado desde permisos peatonales activos.
+- Logs persistidos en `data/logs.jsonl`, consultables desde `/settings > Logs`; al hacer clic en el ultimo log se abre su detalle.
+- Autenticacion Digest fresca por peticion para equipos Hikvision/Dahua cuando aplica.
 - Modo `MOCK_DEVICE=true` para desarrollo sin dispositivo.
-- API local para que EOLO envie tareas o para que el agente haga polling.
+- API local para que EOLO envie tareas, ejecute polling o consulte estado operativo.
 
 ## Arranque local
 
@@ -39,7 +33,7 @@ npm run dev
 Abre:
 
 - Operador: `http://localhost:8080`
-- Ajustes tecnicos: `http://localhost:8080/settings` o desde Operador > Ajustes > Panel Técnico
+- Ajustes: `http://localhost:8080/settings` o desde el menu de perfil del Operador > Ajustes
 
 ## Instalador Electron con ANPR
 
@@ -60,13 +54,13 @@ npm run desktop:win:full
 El instalador Windows queda en:
 
 ```text
-release\EOLO Access Bridge Setup 0.2.9.exe
+release\EOLO Access Bridge Setup 0.2.10.exe
 ```
 
 El instalador macOS queda en:
 
 ```text
-release/EOLO Access Bridge-0.2.9-arm64.dmg
+release/EOLO Access Bridge-0.2.10-arm64.dmg
 ```
 
 Notas:
@@ -93,7 +87,7 @@ https://raw.githubusercontent.com/joqr231210/EOLO-Access-Bridge/main/updates/win
 
 Si el manifiesto publica una version mayor, la app ofrece descargar el instalador, valida SHA-256 si viene incluido, y al elegir **Instalar ahora** cierra Bridge/ANPR de forma ordenada antes de abrir el setup.
 
-Para publicar una actualizacion:
+Para publicar una actualizacion despues de generar el instalador Windows y subirlo a GitHub Releases:
 
 ```powershell
 npm version patch --no-git-tag-version
@@ -103,6 +97,8 @@ git add package.json package-lock.json updates/windows-latest.json
 git commit -m "Release EOLO Access Bridge X.Y.Z"
 git push
 ```
+
+No actualices `updates/windows-latest.json` hasta tener la URL publica final del `.exe`; el script calcula el SHA-256 del instalador real.
 
 En pilotos privados puedes apuntar a otro manifiesto antes de abrir la app:
 
@@ -178,25 +174,72 @@ mkdir -p backups
 tar -czf backups/eolo-access-bridge-data-$(date +%Y%m%d-%H%M%S).tgz data uploads
 ```
 
+## Datos locales importantes
+
+- `data/device-config.json`: configuracion runtime de Bridge, EOLO Cloud, dispositivos faciales, camaras y servicios.
+- `data/operator-access-permissions.json`: ultimo snapshot local de `PermisoAccesos` descargado desde Bubble Data API para el acceso activo. Solo conserva permisos con `VigenciaFinal` posterior al momento de descarga.
+- `data/eolo-users-snapshot.json`: snapshot derivado para cargar a dispositivos faciales. Solo incluye permisos peatonales/persona activos y usa `NombrePrincipal` como nombre y `ImagenRostro` como rostro.
+- `data/logs.jsonl`: bitacora persistida, visible en `/settings > Logs`.
+- `data/events.jsonl`: eventos locales de auditoria, visibles en `Eventos`.
+- `data/operator-pending-movements.json`: movimientos creados offline pendientes de sincronizar.
+- `uploads/`: imagenes temporales o adjuntas por el operador.
+
+`PermisoAccesos` se consulta una vez por acceso activo con constraint Data API `vigenciafinal_date > ahora`; despues se filtra localmente para las vistas `Peatones`, `Vehiculos` y `Sincronizacion > Permisos`. La descarga automatica de permisos la ejecuta `EoloUserSync` cada `EOLO_USER_SYNC_INTERVAL_MINUTES` minutos, por defecto 30. El intervalo `EOLO_OPERATOR_SYNC_INTERVAL_MINUTES` de 5 minutos es independiente y corresponde al refresco general del panel operador.
+
+La lectura de identificaciones usa OpenAI Vision con prioridad por acceso:
+
+1. si el acceso activo trae `AuxKey1`, Bridge usa esa API key;
+2. si `AuxKey1` esta vacio, Bridge usa la API key local guardada en Ajustes;
+3. `/settings > Lectura de Identificaciones` muestra si la key efectiva viene de `Acceso` o de `Local`.
+
 ## API principal
 
+Salud, servicios y configuracion:
+
 - `GET /api/health`
-- `GET /api/device-info`
+- `GET /api/services`
+- `POST /api/services/:id/start|stop|restart`
 - `GET /api/device-config`
 - `PUT /api/device-config`
 - `POST /api/device-config/test`
-- `POST /api/employees`
+
+Dispositivos faciales y empleados:
+
+- `GET /api/face-devices`
+- `POST /api/face-devices`
+- `PUT /api/face-devices/:id`
+- `DELETE /api/face-devices/:id`
+- `POST /api/face-devices/:id/test`
+- `POST /api/face-devices/:id/stream/start`
+- `POST /api/face-devices/:id/stream/stop`
+- `POST /api/face-devices/:id/sync-device`
 - `GET /api/employees`
+- `POST /api/employees`
 - `PUT /api/employees/:employeeNo`
 - `DELETE /api/employees/:employeeNo`
 - `POST /api/employees/:employeeNo/face`
-- `POST /api/eolo/tasks`
+
+Sincronizacion EOLO:
+
 - `GET /api/eolo/users-sync/status`
+- `POST /api/eolo/users-sync/cloud-download`
+- `POST /api/eolo/users-sync/device-apply`
 - `POST /api/eolo/users-sync/run`
+- `POST /api/eolo/tasks`
+- `POST /api/eolo/tasks/poll`
+
+ANPR, eventos y logs:
+
+- `GET /api/anpr/dashboard`
+- `GET /api/anpr/hardware`
+- `PUT /api/anpr/hardware`
+- `GET /api/anpr/config`
+- `PUT /api/anpr/config`
+- `POST /api/anpr/barriers/:id/open`
+- `POST /api/anpr/sync-now`
 - `GET /api/events`
 - `GET /api/events/stream`
-- `POST /api/device/stream/start`
-- `POST /api/device/stream/stop`
+- `GET /api/logs`
 
 Ejemplo de tarea EOLO:
 

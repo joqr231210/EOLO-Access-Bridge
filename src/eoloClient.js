@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { normalizeWorkflowEndpoint } from './eoloWorkflow.js';
 import { log } from './logger.js';
 
 export class EoloClient {
@@ -10,19 +11,25 @@ export class EoloClient {
     return new URL(path, config.eolo.baseUrl).toString();
   }
 
-  userSyncEndpoint() {
-    const endpoint = config.eolo.userSyncEndpoint;
-    const base = endpoint.startsWith('http') ? undefined : config.eolo.baseUrl || 'https://eolo.app';
-    const url = new URL(endpoint, base);
+  userSyncEndpoint(options = {}) {
+    const endpoint = normalizeWorkflowEndpoint(config.eolo.userSyncEndpoint);
+    const version = String(config.operator.appVersion || 'live').replace(/^version-/, '');
+    const versionPath = version === 'live' ? '' : `/version-${version}`;
+    const workflowBaseUrl = `${config.operator.appBaseUrl}${versionPath}/api/1.1/wf`;
+    const url = new URL(`${workflowBaseUrl}/${endpoint}`);
     url.searchParams.set('acceso', config.eolo.access);
-    url.searchParams.set('dispositivo', config.hikvision.localDeviceId);
+    if (options.validAfter) {
+      url.searchParams.set('valid_after', options.validAfter);
+      url.searchParams.set('vigencia_final_after', options.validAfter);
+    }
     return url.toString();
   }
 
-  headers() {
+  headers(options = {}) {
+    const token = options.token || config.eolo.token;
     return {
       'Content-Type': 'application/json',
-      ...(config.eolo.token ? { Authorization: `Bearer ${config.eolo.token}` } : {})
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
     };
   }
 
@@ -64,27 +71,32 @@ export class EoloClient {
     return payload.tasks || [];
   }
 
-  async fetchAccessPermissions() {
+  async fetchAccessPermissions(options = {}) {
     if (!config.eolo.access) {
       const error = new Error('El parametro acceso de EOLO es obligatorio para sincronizar usuarios.');
       error.status = 400;
       throw error;
     }
-    if (!config.hikvision.localDeviceId) {
-      const error = new Error('El ID del dispositivo local es obligatorio para sincronizar usuarios EOLO.');
-      error.status = 400;
-      throw error;
-    }
-    if (!config.eolo.token) {
+    const token = options.token || config.eolo.token;
+    if (!token) {
       const error = new Error('El token Bearer de EOLO es obligatorio para sincronizar usuarios.');
       error.status = 400;
       throw error;
     }
 
-    const response = await fetch(this.userSyncEndpoint(), {
-      method: 'GET',
-      headers: this.headers()
-    });
+    const validAfter = options.validAfter || new Date().toISOString();
+    const url = this.userSyncEndpoint({ validAfter });
+    let response;
+    try {
+      response = await fetch(url, {
+        method: 'GET',
+        headers: this.headers({ token }),
+        signal: AbortSignal.timeout(15000)
+      });
+    } catch (error) {
+      const parsed = new URL(url);
+      throw new Error(`No se pudo conectar con EOLO Cloud (${parsed.origin}): ${error.message}`);
+    }
 
     const body = await response.text().catch(() => '');
     if (!response.ok) {

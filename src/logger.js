@@ -58,6 +58,30 @@ export function getLogs(limit = 100) {
   return memory.logs.slice(-limit).reverse();
 }
 
+export async function getStoredLogs(limit = 500) {
+  const max = Math.min(Math.max(Number(limit) || 100, 1), 2000);
+  const filePath = path.join(config.dataDir, 'logs.jsonl');
+  try {
+    const content = await fs.promises.readFile(filePath, 'utf8');
+    return content
+      .split('\n')
+      .filter(Boolean)
+      .slice(-max)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .reverse();
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return getLogs(max);
+  }
+}
+
 export function getEvents(limit = 100) {
   return memory.events.slice(-limit).reverse();
 }

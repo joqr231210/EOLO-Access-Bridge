@@ -9,13 +9,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
+import { DahuaClient } from './dahuaClient.js';
+import { DahuaEventStream } from './dahuaEventStream.js';
 import { HikvisionClient } from './hikvisionClient.js';
 import { MockDevice } from './mockDevice.js';
 import { EoloClient } from './eoloClient.js';
 import { EoloUserSync } from './eoloUserSync.js';
 import { DeviceEventStream } from './eventStream.js';
 import { TaskRunner } from './taskRunner.js';
-import { bus, ensureDataDirs, getEvents, getLogs, log } from './logger.js';
+import { addEvent, bus, ensureDataDirs, getEvents, getLogs, getStoredLogs, log } from './logger.js';
 import { loadRuntimeConfig, publicRuntimeConfig, saveRuntimeConfig } from './runtimeConfig.js';
 import { ServiceManager, remoteAnprService } from './serviceManager.js';
 
@@ -39,13 +41,25 @@ const eoloClient = new EoloClient();
 const operatorSessions = new Map();
 const operatorCloudSessionCache = new Map();
 const operatorInventorySummaryCache = new Map();
+const operatorAccessVisionKeyCache = new Map();
+const OPERATOR_ACCESS_PERMISSION_DATA_TYPE = 'permisoaccesos';
+const OPERATOR_ACCESS_PERMISSION_BUILDPRINT_TYPE = 'custom.permisoaccesos';
+const OPERATOR_ACCESS_PERMISSION_VALID_UNTIL_FIELD = 'vigenciafinal_date';
+const OPERATOR_ACCESS_DEVICE_DATA_TYPE = config.operator.deviceDataType || 'dispositivosacceso';
+const OPERATOR_PERMISSION_ID2_ENDPOINT = config.operator.permissionId2Endpoint || 'bridge_access_permission_id2';
+let latestOperatorCloudSession = null;
 let go2rtcProcess = null;
 let device = createDevice();
 let eventStream = createEventStream();
+const faceDeviceStreams = new Map();
 let taskRunner = new TaskRunner(device, eoloClient);
-let eoloUserSync = new EoloUserSync(device, eoloClient);
+let eoloUserSync = new EoloUserSync(device, eoloClient, {
+  runHandler: runEoloUserSyncForEligibleFaceDevices
+});
 const serviceManager = new ServiceManager();
 let operatorId2CounterQueue = Promise.resolve();
+const facialMovementEventKeys = new Set();
+const facialMovementContextCache = new Map();
 let go2rtcDesiredRunning = false;
 let go2rtcWatchdogTimer = null;
 let go2rtcRestarting = false;
@@ -65,6 +79,10 @@ app.get('/', (_req, res) => {
 
 app.get('/settings', (_req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));
+});
+
+app.get(['/producto', '/product'], (_req, res) => {
+  res.sendFile(path.join(publicDir, 'product.html'));
 });
 
 app.get(['/operator', '/operator.html', '/operador', '/operador.html'], (_req, res) => {
@@ -89,18 +107,47 @@ const asyncRoute = (handler) => async (req, res, next) => {
 
 async function fetchAnprJson(pathname, options = {}) {
   const { timeoutMs = 8000, ...fetchOptions } = options;
-  const response = await fetch(`${config.anpr.baseUrl}${pathname}`, {
-    ...fetchOptions,
-    signal: AbortSignal.timeout(timeoutMs)
-  });
+  const url = `${config.anpr.baseUrl}${pathname}`;
+  const method = String(fetchOptions.method || 'GET').toUpperCase();
+  let response;
+  try {
+    response = await fetch(url, {
+      ...fetchOptions,
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+  } catch (error) {
+    const wrapped = new Error(`ANPR no respondio ${method} ${pathname}: ${error.message}`);
+    wrapped.status = 502;
+    wrapped.cause = error;
+    wrapped.upstream = { service: 'anpr', method, url, pathname, timeoutMs };
+    throw wrapped;
+  }
+  const rawBody = await response.text().catch(() => '');
   const contentType = response.headers.get('content-type') || '';
-  const payload = contentType.includes('application/json')
-    ? await response.json()
-    : await response.text();
+  let payload = rawBody;
+  if (contentType.includes('application/json') && rawBody) {
+    try {
+      payload = JSON.parse(rawBody);
+    } catch (_error) {
+      payload = { raw: rawBody };
+    }
+  }
   if (!response.ok) {
-    const error = new Error(payload.error || payload.detail || response.statusText);
+    const upstreamMessage = typeof payload === 'object'
+      ? payload.error || payload.detail || payload.message
+      : payload;
+    const error = new Error(`ANPR ${method} ${pathname} respondio ${response.status}: ${upstreamMessage || response.statusText}`);
     error.status = response.status;
     error.body = payload;
+    error.upstream = {
+      service: 'anpr',
+      method,
+      url,
+      pathname,
+      status: response.status,
+      statusText: response.statusText,
+      diagnostics: payload && typeof payload === 'object' ? payload.diagnostics : undefined
+    };
     throw error;
   }
   return payload;
@@ -324,15 +371,17 @@ async function stopGo2rtcPreview(options = {}) {
 
 app.get(
   '/api/health',
-  asyncRoute(async (_req, res) => {
+  asyncRoute(async (req, res) => {
+    await getOperatorSession(req).catch(() => null);
     res.json({
       ok: true,
       mode: config.mockDevice ? 'mock' : 'device',
-      deviceHost: config.hikvision.host,
-      devicePort: config.hikvision.port,
-      deviceProtocol: config.hikvision.protocol,
+      faceDevice: config.faceDevice,
+      deviceHost: activeFaceDeviceSettings().host,
+      devicePort: activeFaceDeviceSettings().port,
+      deviceProtocol: activeFaceDeviceSettings().protocol,
       eoloConfigured: eoloClient.enabled,
-      eoloUserSync: eoloUserSync.status(),
+      eoloUserSync: eoloUserSyncStatus(),
       stream: eventStream?.status() || { running: Boolean(device.interval) }
     });
   })
@@ -385,9 +434,10 @@ app.put(
     eoloUserSync.restart();
     const validation = await validateCurrentDevice();
     await log(validation.ok ? 'info' : 'warn', 'Configuracion del dispositivo guardada', {
-      host: config.hikvision.host,
-      port: config.hikvision.port,
-      protocol: config.hikvision.protocol,
+      faceDevice: config.faceDevice,
+      host: activeFaceDeviceSettings().host,
+      port: activeFaceDeviceSettings().port,
+      protocol: activeFaceDeviceSettings().protocol,
       validationOk: validation.ok,
       eoloUserSyncEnabled: config.eolo.userSyncEnabled,
       eoloAccessSet: Boolean(config.eolo.access),
@@ -400,25 +450,194 @@ app.put(
 app.post(
   '/api/device-config/test',
   asyncRoute(async (req, res) => {
-    const submitted = req.body.hikvision || req.body;
-    const candidate = {
-      ...config.hikvision,
-      ...submitted,
-      password: submitted.password === '' ? config.hikvision.password : submitted.password
-    };
-    const result = await validateDeviceConfig(candidate, Boolean(req.body.mockDevice));
+    const result = await validateDeviceConfig(req.body, Boolean(req.body.mockDevice));
     res.json(result);
+  })
+);
+
+app.get('/api/face-devices', (_req, res) => {
+  res.json({ ok: true, devices: faceDevicesWithStatus() });
+});
+
+app.post(
+  '/api/face-devices/streams/start-enabled',
+  asyncRoute(async (_req, res) => {
+    const results = [];
+    for (const target of eligibleFaceDevices()) {
+      try {
+        const result = await startFaceDeviceStream(target);
+        await setFaceDeviceStreamDesired(target.id, true);
+        results.push({ deviceId: target.id, ok: true, result });
+      } catch (error) {
+        results.push({ deviceId: target.id, ok: false, error: error.message });
+      }
+    }
+    res.json({ ok: results.every((item) => item.ok), results, devices: faceDevicesWithStatus() });
+  })
+);
+
+app.post(
+  '/api/face-devices/streams/stop-all',
+  asyncRoute(async (_req, res) => {
+    const results = [];
+    for (const target of config.faceDevices) {
+      results.push({ deviceId: target.id, result: await stopFaceDeviceStream(target.id) });
+    }
+    await persistFaceDevices(config.faceDevices.map((target) => ({ ...target, streamDesired: false })));
+    res.json({ ok: true, results, devices: faceDevicesWithStatus() });
+  })
+);
+
+app.post(
+  '/api/face-devices',
+  asyncRoute(async (req, res) => {
+    const deviceInput = normalizeFaceDeviceInput(req.body);
+    const next = [
+      ...config.faceDevices,
+      {
+        ...deviceInput,
+        id: crypto.randomUUID(),
+        lastTestOk: false,
+        lastTestAt: '',
+        lastTestMessage: 'Dispositivo guardado; prueba la comunicacion antes de sincronizar.',
+        lastTestStatus: '',
+        lastTestTarget: '',
+        streamDesired: false
+      }
+    ];
+    await persistFaceDevices(next);
+    await log('info', 'Dispositivo facial agregado', {
+      deviceId: next.at(-1).id,
+      type: next.at(-1).type,
+      host: next.at(-1).host
+    });
+    res.status(201).json({ ok: true, devices: faceDevicesWithStatus() });
+  })
+);
+
+app.put(
+  '/api/face-devices/:id',
+  asyncRoute(async (req, res) => {
+    const existing = findFaceDevice(req.params.id);
+    const updated = normalizeFaceDeviceInput(req.body, existing);
+    const passwordChanged =
+      Object.prototype.hasOwnProperty.call(req.body || {}, 'password') && req.body.password !== '';
+    const testStillValid =
+      !passwordChanged &&
+      faceDeviceConnectionSignature(existing) === faceDeviceConnectionSignature(updated);
+    const next = config.faceDevices.map((item) =>
+      item.id === existing.id
+        ? {
+          ...updated,
+          id: existing.id,
+          lastTestOk: testStillValid ? Boolean(existing.lastTestOk) : false,
+          lastTestAt: testStillValid ? existing.lastTestAt || '' : '',
+          lastTestMessage: testStillValid
+            ? existing.lastTestMessage || ''
+            : 'Configuracion modificada; prueba la comunicacion antes de sincronizar.',
+          lastTestStatus: testStillValid ? existing.lastTestStatus || '' : '',
+          lastTestTarget: testStillValid ? existing.lastTestTarget || '' : ''
+        }
+        : item
+    );
+    await persistFaceDevices(next);
+    await log('info', 'Dispositivo facial actualizado', {
+      deviceId: existing.id,
+      type: updated.type,
+      host: updated.host
+    });
+    res.json({ ok: true, devices: faceDevicesWithStatus() });
+  })
+);
+
+app.delete(
+  '/api/face-devices/:id',
+  asyncRoute(async (req, res) => {
+    const existing = findFaceDevice(req.params.id);
+    await stopFaceDeviceStream(existing.id);
+    await persistFaceDevices(config.faceDevices.filter((item) => item.id !== existing.id));
+    await log('info', 'Dispositivo facial eliminado', {
+      deviceId: existing.id,
+      type: existing.type,
+      host: existing.host
+    });
+    res.json({ ok: true, devices: faceDevicesWithStatus() });
+  })
+);
+
+app.post(
+  '/api/face-devices/:id/test',
+  asyncRoute(async (req, res) => {
+    const existing = findFaceDevice(req.params.id);
+    const candidate = req.body && Object.keys(req.body).length
+      ? normalizeFaceDeviceInput(req.body, existing)
+      : existing;
+    const result = await validateFaceDevice(candidate);
+    const testMatchesSavedConfig =
+      faceDeviceConnectionSignature(existing) === faceDeviceConnectionSignature(candidate);
+    if (testMatchesSavedConfig) {
+      await updateFaceDeviceTestState(existing.id, result);
+      result.saved = true;
+    } else {
+      result.saved = false;
+      result.message = `${result.message} Guarda esta configuracion y vuelve a probar para marcar el equipo como probado.`;
+    }
+    result.devices = faceDevicesWithStatus();
+    res.json(result);
+  })
+);
+
+app.post(
+  '/api/face-devices/:id/stream/start',
+  asyncRoute(async (req, res) => {
+    const target = findFaceDevice(req.params.id);
+    const result = await startFaceDeviceStream(target);
+    await setFaceDeviceStreamDesired(target.id, true);
+    res.json({ ok: true, result, devices: faceDevicesWithStatus() });
+  })
+);
+
+app.post(
+  '/api/face-devices/:id/stream/stop',
+  asyncRoute(async (req, res) => {
+    const target = findFaceDevice(req.params.id);
+    const result = await stopFaceDeviceStream(target.id);
+    await setFaceDeviceStreamDesired(target.id, false);
+    res.json({ ok: true, result, devices: faceDevicesWithStatus() });
+  })
+);
+
+app.post(
+  '/api/face-devices/:id/sync-device',
+  asyncRoute(async (req, res) => {
+    const target = findFaceDevice(req.params.id);
+    ensureFaceDeviceSyncEligible(target);
+    const sync = new EoloUserSync(createFaceDeviceClient(target), eoloClient);
+    const result = await sync.applySnapshotToDevice();
+    await log('info', 'Snapshot EOLO cargado a dispositivo facial', {
+      deviceId: target.id,
+      type: target.type,
+      host: target.host,
+      created: result.created?.length || 0,
+      updated: result.updated?.length || 0,
+      deleted: result.deleted?.length || 0
+    });
+    res.json({ ok: true, result, devices: faceDevicesWithStatus() });
   })
 );
 
 app.get(
   '/api/device-info',
   asyncRoute(async (_req, res) => {
-    const [deviceInfo, capabilities] = await Promise.all([
-      device.deviceInfo(),
-      device.capabilities()
-    ]);
-    res.json({ deviceInfo, capabilities });
+    try {
+      const [deviceInfo, capabilities] = await Promise.all([
+        device.deviceInfo(),
+        device.capabilities()
+      ]);
+      res.json({ ok: true, deviceInfo, capabilities });
+    } catch (error) {
+      res.json({ ok: false, error: error.message });
+    }
   })
 );
 
@@ -428,7 +647,8 @@ app.get(
     const maxResults = Number.parseInt(req.query.limit || '30', 10);
     const position = Number.parseInt(req.query.position || '0', 10);
     const employeeNo = req.query.employeeNo ? String(req.query.employeeNo) : undefined;
-    await log('info', 'Consultando empleados en Hikvision', {
+    await log('info', 'Consultando empleados en dispositivo facial', {
+      faceDevice: config.faceDevice,
       employeeNo,
       maxResults,
       position
@@ -443,7 +663,8 @@ app.post(
   '/api/employees',
   asyncRoute(async (req, res) => {
     const employee = normalizeEmployee(req.body);
-    await log('info', 'Enviando alta de empleado a Hikvision', {
+    await log('info', 'Enviando alta de empleado a dispositivo facial', {
+      faceDevice: config.faceDevice,
       employeeNo: employee.employeeNo,
       userInfo: device.toUserInfo ? device.toUserInfo(employee) : employee
     });
@@ -457,7 +678,8 @@ app.put(
   '/api/employees/:employeeNo',
   asyncRoute(async (req, res) => {
     const employee = normalizeEmployee({ ...req.body, employeeNo: req.params.employeeNo });
-    await log('info', 'Enviando modificacion de empleado a Hikvision', {
+    await log('info', 'Enviando modificacion de empleado a dispositivo facial', {
+      faceDevice: config.faceDevice,
       employeeNo: req.params.employeeNo,
       userInfo: device.toUserInfo ? device.toUserInfo(employee) : employee
     });
@@ -486,12 +708,13 @@ app.post(
       res.status(400).json({ ok: false, error: 'La imagen es obligatoria en el campo face' });
       return;
     }
-    await log('info', 'Enviando rostro a Hikvision', {
+    await log('info', 'Enviando rostro a dispositivo facial', {
+      faceDevice: config.faceDevice,
       employeeNo: req.params.employeeNo,
       file: req.file.originalname,
       faceRecord: {
-        faceLibType: config.hikvision.faceLibType,
-        FDID: config.hikvision.fdid,
+        faceLibType: activeFaceDeviceSettings().faceLibType,
+        FDID: activeFaceDeviceSettings().fdid,
         FPID: String(req.params.employeeNo)
       }
     });
@@ -527,14 +750,48 @@ app.post(
   })
 );
 
-app.get('/api/eolo/users-sync/status', (_req, res) => {
-  res.json(eoloUserSync.status());
-});
+app.get('/api/eolo/users-sync/status', asyncRoute(async (req, res) => {
+  await getOperatorSession(req).catch(() => null);
+  res.json(eoloUserSyncStatus());
+}));
 
 app.post(
   '/api/eolo/users-sync/run',
+  asyncRoute(async (req, res) => {
+    const operatorSession = await getOperatorSession(req).catch(() => null);
+    const requestToken = getOperatorToken(req);
+    const result = await runEoloUserSyncForEligibleFaceDevices({
+      token: operatorSession?.token || requestToken,
+      userId: operatorSession?.userId
+    });
+    res.json(result);
+  })
+);
+
+app.post(
+  '/api/eolo/users-sync/cloud-download',
+  asyncRoute(async (req, res) => {
+    const operatorSession = await getOperatorSession(req).catch(() => null);
+    const requestToken = getOperatorToken(req);
+    const tokenContext = resolveEoloUserSyncToken({
+      token: operatorSession?.token || requestToken,
+      userId: operatorSession?.userId
+    });
+    const accessId = String(req.body?.access || req.query.access || config.eolo.access || '').trim();
+    const result = await downloadEoloSnapshotFromOperatorPermissions({
+      token: tokenContext.token,
+      userId: tokenContext.userId,
+      accessId,
+      tokenSource: tokenContext.source
+    });
+    res.json(result);
+  })
+);
+
+app.post(
+  '/api/eolo/users-sync/device-apply',
   asyncRoute(async (_req, res) => {
-    const result = await eoloUserSync.runOnce();
+    const result = await applySnapshotToEligibleFaceDevices();
     res.json(result);
   })
 );
@@ -542,14 +799,22 @@ app.post(
 app.get(
   '/api/anpr/dashboard',
   asyncRoute(async (_req, res) => {
-    res.json(await fetchAnprJson('/api/dashboard'));
+    try {
+      res.json(await fetchAnprJson('/api/dashboard'));
+    } catch (error) {
+      res.json({ ok: false, error: error.message });
+    }
   })
 );
 
 app.get(
   '/api/anpr/hardware',
   asyncRoute(async (_req, res) => {
-    res.json(await fetchAnprJson('/api/hardware'));
+    try {
+      res.json(await fetchAnprJson('/api/hardware'));
+    } catch (error) {
+      res.json({ ok: false, error: error.message });
+    }
   })
 );
 
@@ -557,6 +822,13 @@ app.get(
   '/api/anpr/config',
   asyncRoute(async (_req, res) => {
     res.json(await fetchAnprJson('/api/config'));
+  })
+);
+
+app.get(
+  '/api/anpr/diagnostics',
+  asyncRoute(async (_req, res) => {
+    res.json(await fetchAnprJson('/api/anpr/diagnostics', { timeoutMs: 5000 }));
   })
 );
 
@@ -608,133 +880,7 @@ app.post(
 );
 
 app.get(['/stream-player/:camera', '/operator/stream-player/:camera'], (req, res) => {
-  const cameraName = String(req.params.camera || '').trim();
-  const streamUrl = new URL(config.anpr.streamPublicUrl);
-  streamUrl.protocol = streamUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-  streamUrl.pathname = '/ws/live';
-  streamUrl.search = '';
-  streamUrl.searchParams.set('suuid', cameraName);
-  res.type('html').send(`<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    html, body { width: 100%; height: 100%; margin: 0; background: #101828; overflow: hidden; font-family: Arial, sans-serif; }
-    video { width: 100%; height: 100%; display: block; object-fit: cover; background: #101828; }
-    .status { position: absolute; inset: 0; display: grid; place-items: center; color: #d9e4ff; font-size: 13px; text-align: center; padding: 16px; pointer-events: none; }
-    body.ready .status { display: none; }
-  </style>
-</head>
-<body>
-  <video id="livestream" autoplay muted playsinline controls></video>
-  <div class="status" id="status">Conectando ${escapeHtmlText(cameraName || 'camara')}...</div>
-  <script>
-    const streamUrl = ${JSON.stringify(streamUrl.toString())};
-    const video = document.getElementById('livestream');
-    const statusNode = document.getElementById('status');
-    const mediaSource = new MediaSource();
-    const queue = [];
-    const MAX_QUEUE_PACKETS = 2;
-    const MAX_LIVE_DELAY_SECONDS = 1.2;
-    const BUFFER_KEEP_SECONDS = 3;
-    let sourceBuffer = null;
-    let streamingStarted = false;
-    let trimmingBuffer = false;
-    let ws = null;
-
-    function setStatus(text) {
-      statusNode.textContent = text;
-      document.body.classList.toggle('ready', !text);
-    }
-
-    function appendPacket(packet) {
-      if (!sourceBuffer || sourceBuffer.updating) {
-        queue.push(packet);
-        trimPacketQueue();
-        return;
-      }
-      try {
-        sourceBuffer.appendBuffer(packet);
-        streamingStarted = true;
-        setStatus('');
-      } catch (_error) {
-        queue.length = 0;
-      }
-    }
-
-    function flushQueue() {
-      if (!sourceBuffer || sourceBuffer.updating) return;
-      keepCloseToLive();
-      trimBufferedVideo();
-      const packet = queue.shift();
-      if (packet) appendPacket(packet);
-      else streamingStarted = false;
-    }
-
-    function trimPacketQueue() {
-      if (queue.length > MAX_QUEUE_PACKETS) {
-        queue.splice(0, queue.length - MAX_QUEUE_PACKETS);
-      }
-    }
-
-    function keepCloseToLive() {
-      if (!video.buffered.length) return;
-      const liveEdge = video.buffered.end(video.buffered.length - 1);
-      if (liveEdge - video.currentTime > MAX_LIVE_DELAY_SECONDS) {
-        video.currentTime = Math.max(0, liveEdge - 0.25);
-      }
-    }
-
-    function trimBufferedVideo() {
-      if (!sourceBuffer || sourceBuffer.updating || trimmingBuffer || !video.buffered.length) return;
-      const liveEdge = video.buffered.end(video.buffered.length - 1);
-      const removeEnd = liveEdge - BUFFER_KEEP_SECONDS;
-      if (removeEnd <= 0) return;
-      trimmingBuffer = true;
-      try {
-        sourceBuffer.remove(0, removeEnd);
-      } catch (_error) {
-        trimmingBuffer = false;
-      }
-    }
-
-    mediaSource.addEventListener('sourceopen', () => {
-      ws = new WebSocket(streamUrl);
-      ws.binaryType = 'arraybuffer';
-      ws.onopen = () => setStatus('Esperando video...');
-      ws.onerror = () => setStatus('No se pudo conectar con el visualizador RTSP.');
-      ws.onclose = () => {
-        if (!document.body.classList.contains('ready')) setStatus('Visualizador desconectado.');
-      };
-      ws.onmessage = (event) => {
-        const data = new Uint8Array(event.data);
-        if (data[0] === 9) {
-          const codec = new TextDecoder('utf-8').decode(data.slice(1));
-          sourceBuffer = mediaSource.addSourceBuffer('video/mp4; codecs="' + codec + '"');
-          sourceBuffer.mode = 'segments';
-          sourceBuffer.addEventListener('updateend', () => {
-            trimmingBuffer = false;
-            flushQueue();
-          });
-          return;
-        }
-        if (!streamingStarted) appendPacket(event.data);
-        else {
-          queue.push(event.data);
-          trimPacketQueue();
-        }
-        flushQueue();
-      };
-    });
-
-    video.src = URL.createObjectURL(mediaSource);
-    window.addEventListener('pagehide', () => {
-      if (ws) ws.close();
-    });
-  </script>
-</body>
-</html>`);
+  res.redirect(302, `/webrtc-player/${encodeURIComponent(req.params.camera || '')}`);
 });
 
 app.get(['/webrtc-player/:camera', '/operator/webrtc-player/:camera'], (req, res) => {
@@ -767,13 +913,20 @@ app.get(
   '/api/operator/stream-cameras',
   requireOperatorSession,
   asyncRoute(async (_req, res) => {
-    const [hardware, servicesPayload] = await Promise.all([
-      fetchAnprJson('/api/hardware', { timeoutMs: 8000 }),
-      fetchAnprJson('/api/services', { timeoutMs: 5000 }).catch(() => ({ services: [] }))
-    ]);
-    const services = Array.isArray(servicesPayload.services) ? servicesPayload.services : [];
-    const previewService = services.find((service) => service.id === 'rtsp-preview') || {};
-    const webrtcStatus = go2rtcStatus();
+    const hardware = await fetchAnprJson('/api/hardware', { timeoutMs: 8000 });
+    let webrtcStatus = go2rtcStatus();
+    let streamError = '';
+    if (config.anpr.webrtcEnabled && !webrtcStatus.running) {
+      try {
+        webrtcStatus = await startGo2rtcPreview();
+      } catch (error) {
+        streamError = error.message;
+        await log('warn', 'No se pudo activar Visualizador RTC automaticamente', {
+          error: error.message
+        });
+        webrtcStatus = go2rtcStatus();
+      }
+    }
     const useWebrtc = Boolean(config.anpr.webrtcEnabled && webrtcStatus.running);
     const cameras = (hardware.cameras || [])
       .map((camera) => {
@@ -785,10 +938,8 @@ app.get(
           prefix: camera.prefix || '',
           hasRtsp: Boolean(camera.has_rtsp || rtspUrl),
           rtspUrl: maskRtspUrl(rtspUrl),
-          playerMode: useWebrtc ? 'webrtc' : 'mse',
-          playerUrl: useWebrtc
-            ? `/webrtc-player/${encodeURIComponent(name)}`
-            : `/stream-player/${encodeURIComponent(name)}`
+          playerMode: 'webrtc',
+          playerUrl: `/webrtc-player/${encodeURIComponent(name)}`
         };
       })
       .filter((camera) => camera.hasRtsp && camera.name);
@@ -796,13 +947,11 @@ app.get(
       ok: true,
       cameras,
       stream: {
-        running: useWebrtc || Boolean(previewService.running),
-        status: useWebrtc
-          ? 'running'
-          : previewService.status || (previewService.running ? 'running' : 'stopped'),
-        mode: useWebrtc ? 'webrtc' : 'mse',
-        publicUrl: useWebrtc ? config.anpr.webrtcPublicUrl : config.anpr.streamPublicUrl,
-        fallbackPublicUrl: config.anpr.streamPublicUrl
+        running: useWebrtc,
+        status: useWebrtc ? 'running' : 'stopped',
+        mode: 'webrtc',
+        publicUrl: config.anpr.webrtcPublicUrl,
+        error: streamError
       }
     });
   })
@@ -812,11 +961,7 @@ app.post(
   '/api/operator/stream-cameras/start',
   requireOperatorSession,
   asyncRoute(async (_req, res) => {
-    if (config.anpr.webrtcEnabled) {
-      await startGo2rtcPreview();
-    } else {
-      await fetchAnprJson('/api/services/rtsp-preview/start', { method: 'POST', timeoutMs: 10000 });
-    }
+    await startGo2rtcPreview();
     res.json(await fetchAnprJson('/api/services', { timeoutMs: 5000 }));
   })
 );
@@ -825,11 +970,7 @@ app.post(
   '/api/operator/stream-cameras/stop',
   requireOperatorSession,
   asyncRoute(async (_req, res) => {
-    if (config.anpr.webrtcEnabled) {
-      await stopGo2rtcPreview();
-    } else {
-      await fetchAnprJson('/api/services/rtsp-preview/stop', { method: 'POST', timeoutMs: 10000 });
-    }
+    await stopGo2rtcPreview();
     res.json(await fetchAnprJson('/api/services', { timeoutMs: 5000 }));
   })
 );
@@ -897,6 +1038,7 @@ app.post(
     const code = String(req.body.code || '').trim();
     if (config.operator.authMode === 'cloud') {
       const session = await loginOperatorWithBubble({ mode, phone, pin, code });
+      rememberOperatorCloudSession(session);
       await log('info', 'Sesion de operador iniciada en EOLO Cloud', {
         phone,
         mode,
@@ -948,9 +1090,13 @@ app.post(
   asyncRoute(async (req, res) => {
     const token = getOperatorToken(req);
     if (token) operatorSessions.delete(token);
+    forgetOperatorCloudSession(token);
     if (token) {
       for (const key of operatorCloudSessionCache.keys()) {
         if (key.startsWith(`${token}:`)) operatorCloudSessionCache.delete(key);
+      }
+      for (const key of operatorAccessVisionKeyCache.keys()) {
+        if (key.startsWith(`${token}:`)) operatorAccessVisionKeyCache.delete(key);
       }
     }
     res.json({ ok: true });
@@ -973,6 +1119,7 @@ app.get(
         }
       );
       if (cloudAccesses) {
+        rememberOperatorAccessVisionKeys(req.operatorSession, cloudAccesses);
         res.json({
           ok: true,
           source: 'cloud',
@@ -982,7 +1129,7 @@ app.get(
       }
     }
 
-    const payload = await fetchAnprJson('/api/config');
+    const payload = await fetchAnprJson('/api/config').catch(() => ({}));
     const cfg = payload.config || payload;
     const cameras = Array.isArray(cfg.cameras) ? cfg.cameras : [];
     const configuredAccess = cfg.id_acceso || config.eolo.access || '';
@@ -1039,7 +1186,7 @@ app.get(
       }
     }
 
-    const payload = await fetchAnprJson('/api/config');
+    const payload = await fetchAnprJson('/api/config').catch(() => ({}));
     const cfg = payload.config || payload;
     const cameras = Array.isArray(cfg.cameras) ? cfg.cameras : [];
     const entryCamera = cameras.find((camera) => camera.type === 'Entrada') || cameras[0] || {};
@@ -1067,6 +1214,88 @@ app.get(
           active: true
         }
       ]
+    });
+  })
+);
+
+app.get(
+  '/api/operator/access-devices',
+  requireOperatorSession,
+  asyncRoute(async (req, res) => {
+    const accessId = String(req.query.access || req.query.access_id || '').trim();
+    if (!accessId) {
+      const error = new Error('El acceso es obligatorio para consultar dispositivos EOLO.');
+      error.status = 400;
+      throw error;
+    }
+    if (config.operator.authMode !== 'cloud') {
+      res.json({ ok: true, source: 'local-disabled', devices: [] });
+      return;
+    }
+
+    const devices = await fetchOperatorCloudAccessDevices(req.operatorSession, accessId)
+      .catch(async (error) => {
+        await log('warn', 'No se pudieron consultar DispositivosAcceso en EOLO Cloud', {
+          error: error.message,
+          status: error.status,
+          dataType: OPERATOR_ACCESS_DEVICE_DATA_TYPE,
+          accessId
+        });
+        if (isBubbleDataTypeNotFoundError(error)) {
+          return [];
+        }
+        throw error;
+      });
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      source: 'cloud-data-api',
+      dataType: OPERATOR_ACCESS_DEVICE_DATA_TYPE,
+      accessId,
+      devices
+    });
+  })
+);
+
+app.post(
+  '/api/operator/access-devices',
+  requireOperatorSession,
+  asyncRoute(async (req, res) => {
+    const body = req.body || {};
+    const accessId = firstText(body.accessId, body.access_id, req.query.access, req.query.access_id).trim();
+    if (!accessId) {
+      const error = new Error('El acceso es obligatorio para crear el DispositivosAcceso.');
+      error.status = 400;
+      throw error;
+    }
+    if (config.operator.authMode !== 'cloud') {
+      const error = new Error('La creacion de DispositivosAcceso requiere sesion EOLO Cloud.');
+      error.status = 409;
+      throw error;
+    }
+
+    const result = await upsertOperatorCloudAccessDevice(req.operatorSession, {
+      accessId,
+      localDeviceId: body.localDeviceId,
+      deviceId: body.deviceId,
+      name: body.name,
+      bridgeIdentifier: body.bridgeIdentifier,
+      controlPointId: body.controlPointId,
+      controlPointName: body.controlPointName,
+      type: body.type,
+      host: body.host,
+      port: body.port,
+      protocol: body.protocol
+    });
+    const devices = await fetchOperatorCloudAccessDevices(req.operatorSession, accessId)
+      .catch(() => (result.device ? [result.device] : []));
+    res.status(201).json({
+      ok: true,
+      source: 'cloud-workflow',
+      accessId,
+      device: result.device,
+      devices,
+      workflow: result.workflow
     });
   })
 );
@@ -1216,6 +1445,129 @@ app.get(
 );
 
 app.get(
+  '/api/operator/access-permissions',
+  requireOperatorSession,
+  asyncRoute(async (req, res) => {
+    const accessId = String(req.query.access || req.query.access_id || '').trim();
+    const search = String(req.query.search || '').trim();
+    if (!accessId) {
+      const error = new Error('El acceso es obligatorio para consultar permisos.');
+      error.status = 400;
+      throw error;
+    }
+
+    if (config.operator.authMode === 'cloud') {
+      const cloudPermissions = await fetchOperatorCloudAccessPermissions(req.operatorSession, accessId, { search })
+        .catch(async (error) => {
+          await log('warn', 'No se pudieron consultar PermisoAccesos en EOLO Cloud', {
+            error: error.message,
+            status: error.status,
+            accessId
+          });
+          return null;
+        });
+      if (cloudPermissions) {
+        const ensuredPermissions = await ensureOperatorCloudAccessPermissionsId2(
+          req.operatorSession,
+          cloudPermissions.permissions,
+          accessId
+        );
+        const snapshot = await writeOperatorAccessPermissionsSnapshot(accessId, ensuredPermissions, {
+          validAfter: cloudPermissions.validAfter,
+          sourceCount: cloudPermissions.sourceCount,
+          skippedExpired: cloudPermissions.skippedExpired
+        });
+        const snapshotPermissions = snapshot.permissions || [];
+        const summary = summarizeOperatorAccessPermissions(snapshotPermissions);
+        res.set('Cache-Control', 'no-store');
+        res.json({
+          ok: true,
+          source: 'cloud',
+          downloadedAt: snapshot.downloadedAt,
+          validAfter: snapshot.validAfter,
+          permissions: snapshotPermissions,
+          total: snapshotPermissions.length,
+          summary,
+          sourceCount: snapshot.sourceCount,
+          skippedExpired: snapshot.skippedExpired,
+          schema: operatorAccessPermissionSchema()
+        });
+        return;
+      }
+    }
+
+    const fallbackSnapshot = readOperatorAccessPermissionsSnapshot(accessId, search);
+    const fallback = fallbackSnapshot?.permissions ||
+      localFallbackAccessPermissions(accessId, search);
+    const summary = summarizeOperatorAccessPermissions(fallback);
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      source: fallbackSnapshot ? 'local-snapshot' : 'local-fallback',
+      downloadedAt: fallbackSnapshot?.downloadedAt || null,
+      permissions: fallback,
+      total: fallback.length,
+      summary,
+      schema: operatorAccessPermissionSchema()
+    });
+  })
+);
+
+app.post(
+  '/api/operator/access-permissions/id2',
+  requireOperatorSession,
+  asyncRoute(async (req, res) => {
+    const accessId = String(req.body.access || req.body.access_id || req.query.access || req.query.access_id || '').trim();
+    const permissionId = String(req.body.permission || req.body.permission_id || req.body.permiso || '').trim();
+    const tipoPermiso = String(req.body.tipo_permiso || req.body.permission_type || '').trim();
+    const tipoEntidad = String(req.body.tipo_entidad || req.body.entity_type || '').trim();
+    if (!accessId) {
+      const error = new Error('El acceso es obligatorio para generar ID2 de PermisoAccesos.');
+      error.status = 400;
+      throw error;
+    }
+    const result = await assignOperatorCloudAccessPermissionId2(req.operatorSession, {
+      accessId,
+      permissionId,
+      tipoPermiso,
+      tipoEntidad
+    });
+    res.json(result);
+  })
+);
+
+app.put(
+  '/api/operator/access-permissions/:id',
+  requireOperatorSession,
+  asyncRoute(async (req, res) => {
+    const accessId = String(req.body.access || req.body.access_id || req.query.access || req.query.access_id || '').trim();
+    if (!accessId) {
+      const error = new Error('El acceso es obligatorio para actualizar permisos.');
+      error.status = 400;
+      throw error;
+    }
+    const payload = normalizeOperatorAccessPermissionPatch(req.body, accessId);
+    const updated = await patchOperatorDataItem(
+      req.operatorSession,
+      OPERATOR_ACCESS_PERMISSION_DATA_TYPE,
+      req.params.id,
+      payload
+    );
+    const normalized = normalizeOperatorAccessPermission(
+      { ...updated, _id: req.params.id, ...payload },
+      accessId
+    );
+    await mergeOperatorAccessPermissionSnapshot(accessId, normalized);
+    res.json({
+      ok: true,
+      source: 'cloud-data-api',
+      permission: normalized,
+      raw: updated
+    });
+  })
+);
+
+app.get(
   '/api/operator/plate-history',
   requireOperatorSession,
   asyncRoute(async (req, res) => {
@@ -1291,6 +1643,13 @@ app.post(
           controlPointId,
           error: error.message
         });
+        await recordOperatorMovementEvent(req, {
+          payload: movementPayload,
+          movement: pending.movement,
+          accessId,
+          controlPointId,
+          source: 'local-pending'
+        });
         res.status(202).json({
           ok: true,
           source: 'local-pending',
@@ -1303,6 +1662,13 @@ app.post(
       });
       if (!createdMovement) return;
       invalidateOperatorInventorySummary(accessId);
+      await recordOperatorMovementEvent(req, {
+        payload: movementPayload,
+        movement: createdMovement,
+        accessId,
+        controlPointId,
+        source: 'cloud'
+      });
       res.status(201).json({
         ok: true,
         source: 'cloud',
@@ -1312,14 +1678,21 @@ app.post(
       return;
     }
 
-    res.status(201).json(
-      await fetchAnprJson('/api/operator/movements', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(req.body),
-        timeoutMs: 12000
-      })
-    );
+    const localResult = await fetchAnprJson('/api/operator/movements', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+      timeoutMs: 12000
+    });
+    const localMovement = localResult?.movement || localResult?.movements?.[0] || localResult;
+    await recordOperatorMovementEvent(req, {
+      payload: req.body,
+      movement: localMovement,
+      accessId,
+      controlPointId,
+      source: localResult?.source || 'local'
+    });
+    res.status(201).json(localResult);
   })
 );
 
@@ -1446,8 +1819,22 @@ app.post(
 app.get(
   '/api/operator/vision-config',
   requireOperatorSession,
-  asyncRoute(async (_req, res) => {
-    res.json({ ok: true, openaiVision: publicRuntimeConfig().openaiVision });
+  asyncRoute(async (req, res) => {
+    const accessId = firstText(req.query.access, req.query.access_id);
+    const keyContext = await resolveOpenAiVisionApiKey(req.operatorSession, accessId);
+    res.json({
+      ok: true,
+      openaiVision: {
+        ...publicRuntimeConfig().openaiVision,
+        effectiveEnabled: Boolean(config.openaiVision.enabled || keyContext.accessKeySet),
+        effectiveApiKeySet: Boolean(keyContext.apiKey),
+        effectiveApiKeySource: keyContext.source,
+        effectiveApiKeyLabel: keyContext.label,
+        accessApiKeySet: keyContext.accessKeySet,
+        localApiKeySet: keyContext.localKeySet,
+        accessId: keyContext.accessId
+      }
+    });
   })
 );
 
@@ -1492,15 +1879,66 @@ app.put(
   })
 );
 
+app.get(
+  '/api/operator/bridge-settings',
+  requireOperatorSession,
+  asyncRoute(async (_req, res) => {
+    res.json({ ok: true, operator: await publicOperatorCloudConfig() });
+  })
+);
+
+app.put(
+  '/api/operator/bridge-settings',
+  requireOperatorSession,
+  asyncRoute(async (req, res) => {
+    const body = req.body || {};
+    const saved = await saveRuntimeConfig({
+      operator: {
+        serialNumber: firstText(body.serialNumber, body.sn)
+      }
+    });
+    let deviceHeartbeat = null;
+    const accessId = firstText(body.accessId, body.access_id, req.query.access, req.query.access_id);
+    if (config.operator.deviceHeartbeatEnabled && config.operator.authMode === 'cloud') {
+      try {
+        deviceHeartbeat = await upsertOperatorCloudDeviceHeartbeat(req.operatorSession, { accessId });
+      } catch (error) {
+        deviceHeartbeat = {
+          ok: false,
+          error: error.message,
+          status: error.status
+        };
+        await log('warn', 'No se pudo reflejar SN del Bridge en EOLO Cloud', {
+          error: error.message,
+          status: error.status,
+          accessId
+        });
+      }
+    }
+    await log('info', 'Ajustes Bridge guardados', {
+      deviceId: await operatorBridgeDeviceId(),
+      sn: saved.operator.serialNumber,
+      cloudUpdated: Boolean(deviceHeartbeat?.ok)
+    });
+    res.json({
+      ok: true,
+      operator: await publicOperatorCloudConfig(),
+      deviceHeartbeat
+    });
+  })
+);
+
 app.post(
   '/api/operator/identification/extract-name',
   requireOperatorSession,
   asyncRoute(async (req, res) => {
-    if (!config.openaiVision.enabled) {
+    const accessId = firstText(req.body.access_id, req.body.access, req.query.access_id, req.query.access);
+    const keyContext = await resolveOpenAiVisionApiKey(req.operatorSession, accessId);
+    if (!config.openaiVision.enabled && !keyContext.accessKeySet) {
       res.json({ ok: true, enabled: false, extracted: false, message: 'OpenAI Vision esta deshabilitado.' });
       return;
     }
-    if (!config.openaiVision.apiKey) {
+    if (!keyContext.apiKey) {
       const error = new Error('OpenAI Vision no tiene API key configurada.');
       error.status = 400;
       throw error;
@@ -1513,16 +1951,20 @@ app.post(
       throw error;
     }
     const startedAt = Date.now();
-    const result = await extractIdentificationName(imageDataUrl);
+    const result = await extractIdentificationName(imageDataUrl, { apiKey: keyContext.apiKey });
     await log(result.fullName ? 'info' : 'warn', 'Lectura OpenAI Vision de identificacion completada', {
       extracted: Boolean(result.fullName),
       confidence: result.confidence,
       model: config.openaiVision.model,
+      keySource: keyContext.source,
+      accessId,
       latencyMs: Date.now() - startedAt
     });
     res.json({
       ok: true,
       enabled: true,
+      apiKeySource: keyContext.source,
+      apiKeyLabel: keyContext.label,
       extracted: Boolean(result.fullName),
       ...result
     });
@@ -1537,6 +1979,7 @@ app.get(
     res.json({
       ok: true,
       checkedAt,
+      operator: await publicOperatorCloudConfig(),
       bridge: {
         online: true,
         checkedAt
@@ -1592,14 +2035,52 @@ app.get(
 );
 
 app.get('/api/events', (req, res) => {
-  const limit = Number.parseInt(req.query.limit || '100', 10);
-  res.json({ events: getEvents(limit) });
+  const limit = Math.min(Number.parseInt(req.query.limit || '500', 10) || 500, 2000);
+  const search = normalizeSearchText(req.query.search || '');
+  const objectType = String(req.query.object_type || '').toLowerCase();
+  const startDate = parseEventBoundary(req.query.start, 'start');
+  const endDate = parseEventBoundary(req.query.end, 'end');
+  const events = readLocalEventHistory()
+    .map(normalizeLocalEvent)
+    .filter((event) => {
+      const eventTime = parseOperatorDateValue(event.timestamp);
+      if (startDate && (!eventTime || eventTime < startDate)) return false;
+      if (endDate && (!eventTime || eventTime > endDate)) return false;
+      if (objectType === 'vehicle' && !event.hasVehicle) return false;
+      if (objectType === 'person' && !event.hasPerson) return false;
+      if (search) {
+        const haystack = normalizeSearchText([
+          event.type,
+          event.objectType,
+          event.identifiedValue,
+          event.camera,
+          event.device,
+          event.detail,
+          event.rawText
+        ].join(' '));
+        if (!haystack.includes(search)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const bDate = parseOperatorDateValue(b.timestamp);
+      const aDate = parseOperatorDateValue(a.timestamp);
+      return (bDate?.getTime() || 0) - (aDate?.getTime() || 0);
+    });
+  const summary = summarizeLocalEvents(events);
+  res.json({
+    ok: true,
+    source: 'local',
+    events: events.slice(0, limit),
+    total: events.length,
+    summary
+  });
 });
 
-app.get('/api/logs', (req, res) => {
+app.get('/api/logs', asyncRoute(async (req, res) => {
   const limit = Number.parseInt(req.query.limit || '100', 10);
-  res.json({ logs: getLogs(limit) });
-});
+  res.json({ logs: await getStoredLogs(limit) });
+}));
 
 app.get('/api/events/stream', (req, res) => {
   res.writeHead(200, {
@@ -1664,12 +2145,14 @@ app.use((error, _req, res, _next) => {
   log('error', 'Error en solicitud HTTP', {
     error: error.message,
     status: error.status,
-    body: error.body
+    body: error.body,
+    upstream: error.upstream
   }).catch(() => {});
   res.status(error.status || 500).json({
     ok: false,
     error: error.message,
-    detail: error.body
+    detail: error.body,
+    upstream: error.upstream
   });
 });
 
@@ -1684,8 +2167,14 @@ const server = app.listen(config.port, () => {
       log('warn', 'No se pudo iniciar WebRTC automaticamente', { error: error.message }).catch(
         () => {}
       );
+      scheduleGo2rtcWatchdog();
     });
   }
+  restoreDesiredFaceDeviceStreams().catch((error) => {
+    log('warn', 'No se pudieron restaurar streams faciales automaticamente', {
+      error: error.message
+    }).catch(() => {});
+  });
 });
 
 const shutdown = () => {
@@ -1694,6 +2183,7 @@ const shutdown = () => {
   eoloUserSync.stop();
   stopGo2rtcPreview().catch(() => {});
   if (eventStream?.running) eventStream.stop();
+  stopAllFaceDeviceStreams();
   server.close(() => process.exit(0));
 };
 
@@ -1713,23 +2203,69 @@ function normalizeEmployee(body) {
     beginTime: body.beginTime || undefined,
     endTime: body.endTime || undefined,
     enable: body.enable !== false,
-    doorNo: body.doorNo || config.hikvision.doorNo,
-    planTemplateNo: body.planTemplateNo || config.hikvision.planTemplateNo
+    doorNo: body.doorNo || activeFaceDeviceSettings().doorNo,
+    planTemplateNo: body.planTemplateNo || activeFaceDeviceSettings().planTemplateNo
   };
 }
 
 function registerServices() {
   serviceManager.register({
-    id: 'hikvision-events',
-    name: 'Face Recognition',
+    id: 'pedestrians',
+    name: 'Peatones',
     group: 'bridge',
-    description: 'Escucha eventos del dispositivo local o del simulador.',
+    description: 'Administra servicios y dispositivos locales para reconocimiento y permisos peatonales.',
+    controllable: false,
+    status: async () => {
+      const running = config.faceDevices.filter((item) => faceDeviceStreams.get(item.id)?.running).length;
+      return {
+        running: running > 0,
+        status: running > 0 ? 'running' : 'stopped',
+        totalDevices: config.faceDevices.length,
+        runningDevices: running
+      };
+    }
+  });
+
+  serviceManager.register({
+    id: 'vehicles',
+    name: 'Vehiculos',
+    group: 'bridge',
+    description: 'Administra servicios y dispositivos locales para reconocimiento, registro y permisos vehiculares.',
+    controllable: false,
+    status: async () => {
+      try {
+        const [hardware, services] = await Promise.all([
+          fetchAnprJson('/api/hardware', { timeoutMs: 5000 }).catch(() => ({ cameras: [] })),
+          fetchAnprJson('/api/services', { timeoutMs: 5000 }).catch(() => ({ services: [] }))
+        ]);
+        const processor = services.services?.find((item) => item.id === 'anpr-processor') || {};
+        const cameras = Array.isArray(hardware.cameras) ? hardware.cameras : [];
+        const rtspStreams = processor.running
+          ? cameras.filter((camera) => camera.rtsp || camera.rtsp_url || camera.has_rtsp).length
+          : 0;
+        return {
+          running: rtspStreams > 0,
+          status: rtspStreams > 0 ? 'running' : 'stopped',
+          totalDevices: cameras.length,
+          rtspStreams
+        };
+      } catch (error) {
+        return { running: false, status: 'unreachable', error: error.message };
+      }
+    }
+  });
+
+  serviceManager.register({
+    id: 'hikvision-events',
+    name: 'Reconocimiento Facial',
+    group: 'bridge',
+    description: 'Opera reconocimiento facial local y eventos del dispositivo activo.',
     status: async () => {
       const running = config.mockDevice ? Boolean(device.interval) : Boolean(eventStream?.running);
       return {
         running,
         status: running ? 'running' : 'stopped',
-        mode: config.mockDevice ? 'mock' : 'device'
+        mode: config.mockDevice ? 'mock' : config.faceDevice
       };
     },
     start: startDeviceEventService,
@@ -1737,10 +2273,27 @@ function registerServices() {
   });
 
   serviceManager.register({
+    id: 'face-devices',
+    name: 'Dispositivos Faciales',
+    group: 'bridge',
+    description: 'Administra multiples terminales Dahua/Hikvision y sus streams locales.',
+    controllable: false,
+    status: async () => {
+      const running = config.faceDevices.filter((item) => faceDeviceStreams.get(item.id)?.running).length;
+      return {
+        running: running > 0,
+        status: running > 0 ? 'running' : 'stopped',
+        total: config.faceDevices.length,
+        runningDevices: running
+      };
+    }
+  });
+
+  serviceManager.register({
     id: 'eolo-users-sync',
     name: 'Residentes Sync',
     group: 'bridge',
-    description: 'Sincroniza permisos/residentes EOLO hacia Hikvision.',
+    description: 'Sincroniza permisos/residentes EOLO hacia todos los dispositivos faciales habilitados y probados.',
     status: async () => ({
       ...eoloUserSync.status(),
       running: Boolean(eoloUserSync.timer || eoloUserSync.running),
@@ -1817,23 +2370,83 @@ function registerServices() {
   );
   serviceManager.register({
     id: 'barriers',
-    name: 'Barreras',
+    name: 'Puertas y Barreras',
     group: 'anpr',
-    description: 'Configura las barreras ISAPI disponibles para activacion desde ANPR.',
+    description: 'Configura puertas y barreras disponibles para apertura local y activacion desde ANPR.',
     controllable: false,
-    status: async () => ({ running: true, status: 'ready' })
+    status: async () => {
+      try {
+        const hardware = await fetchAnprJson('/api/hardware', { timeoutMs: 5000 }).catch(() => ({ cameras: [], barriers: [] }));
+        const cameras = Array.isArray(hardware.cameras) ? hardware.cameras : [];
+        const barriers = Array.isArray(hardware.barriers) ? hardware.barriers : [];
+        const linkedIds = new Set();
+        cameras.forEach((camera) => {
+          (Array.isArray(camera.barrier_ids) ? camera.barrier_ids : []).forEach((id) => {
+            if (id) linkedIds.add(id);
+          });
+        });
+        const associated = barriers.filter((barrier) => {
+          const id = barrier.id_barra || barrier.id || barrier.numero_barra || '';
+          if (id && linkedIds.has(id)) return true;
+          return Boolean(barrier.camera_name && cameras.some((camera) => camera.name === barrier.camera_name));
+        }).length;
+        return {
+          running: associated > 0,
+          status: associated > 0 ? 'associated' : 'unlinked',
+          totalDevices: barriers.length,
+          associated
+        };
+      } catch (error) {
+        return { running: false, status: 'unreachable', error: error.message };
+      }
+    }
   });
-  serviceManager.register(
-    remoteAnprService({
-      id: 'rtsp-preview',
-      name: 'Visualizador Cámaras',
-      baseUrl: config.anpr.baseUrl,
-      description: 'Servidor interno de video para previsualizar camaras.'
+  serviceManager.register({
+    id: 'identification-reader',
+    name: 'Lectura de Identificaciones',
+    group: 'bridge',
+    description: 'Configura camara local y OpenAI Vision para lectura de identificaciones.',
+    controllable: false,
+    status: async () => {
+      const running = Boolean(config.openaiVision.enabled && config.openaiVision.apiKey);
+      return {
+        running,
+        status: running ? 'configured' : 'pending',
+        model: config.openaiVision.model,
+        apiKeySet: Boolean(config.openaiVision.apiKey)
+      };
+    }
+  });
+  serviceManager.register({
+    id: 'cloud-sync',
+    name: 'Sincronizacion',
+    group: 'bridge',
+    description: 'Configura Cloud, descarga de permisos y carga automatica a dispositivos locales.',
+    controllable: false,
+    status: async () => ({
+      running: Boolean(config.operator.appBaseUrl),
+      status: config.operator.appBaseUrl ? 'configured' : 'pending',
+      appBaseUrl: config.operator.appBaseUrl,
+      appVersion: config.operator.appVersion,
+      deviceHeartbeatEnabled: config.operator.deviceHeartbeatEnabled
     })
-  );
+  });
+  serviceManager.register({
+    id: 'bridge-settings',
+    name: 'Ajustes Bridge',
+    group: 'bridge',
+    description: 'Configura el identificador operativo y SN del Bridge local.',
+    controllable: false,
+    status: async () => ({
+      running: true,
+      status: 'configured',
+      deviceId: await operatorBridgeDeviceId(),
+      serialNumber: operatorBridgeSerial()
+    })
+  });
   serviceManager.register({
     id: 'webrtc-preview',
-    name: 'Visualizador WebRTC',
+    name: 'Visualizador RTC',
     group: 'anpr',
     description: 'Proxy ligero go2rtc para video RTSP de baja latencia en navegador.',
     status: async () => {
@@ -1878,11 +2491,458 @@ function sanitizeEmployee(employee) {
 }
 
 function createDevice() {
-  return config.mockDevice ? new MockDevice() : new HikvisionClient(config.hikvision);
+  if (config.mockDevice) return new MockDevice();
+  if (config.faceDevice === 'dahua') return new DahuaClient(config.dahua);
+  return new HikvisionClient(config.hikvision);
 }
 
 function createEventStream() {
-  return config.mockDevice ? null : new DeviceEventStream(device, eoloClient);
+  if (config.mockDevice) return null;
+  if (config.faceDevice === 'dahua') {
+    return new DahuaEventStream(device, eoloClient, {
+      onAccessEvent: handleFacialAccessEvent
+    });
+  }
+  return new DeviceEventStream(device, eoloClient, {
+    onAccessEvent: handleFacialAccessEvent
+  });
+}
+
+function createFaceDeviceClient(faceDevice) {
+  if (config.mockDevice) return new MockDevice();
+  const settings = faceDeviceSettingsForClient(faceDevice);
+  if (faceDevice.type === 'dahua') return new DahuaClient(settings);
+  return new HikvisionClient(settings);
+}
+
+function createFaceDeviceStream(faceDevice) {
+  if (config.mockDevice) return null;
+  const client = createFaceDeviceClient(faceDevice);
+  const options = { onAccessEvent: handleFacialAccessEvent };
+  return faceDevice.type === 'dahua'
+    ? new DahuaEventStream(client, eoloClient, options)
+    : new DeviceEventStream(client, eoloClient, options);
+}
+
+function faceDeviceSettingsForClient(faceDevice) {
+  return {
+    ...faceDevice,
+    bridgeIdentifier: faceDevice.bridgeIdentifier || faceDevice.name,
+    dedupWindowMs: Number(faceDevice.dedupWindowSeconds || 8) * 1000
+  };
+}
+
+function findFaceDevice(deviceId) {
+  const target = config.faceDevices.find((item) => item.id === deviceId);
+  if (!target) {
+    const error = new Error('Dispositivo facial no encontrado');
+    error.status = 404;
+    throw error;
+  }
+  return target;
+}
+
+function publicFaceDevice(faceDevice) {
+  const { password, ...safeDevice } = faceDevice;
+  return {
+    ...safeDevice,
+    passwordSet: Boolean(password),
+    streamDesired: Boolean(faceDevice.streamDesired),
+    stream: faceDeviceStreams.get(faceDevice.id)?.status() || {
+      running: false,
+      device: faceDevice.type,
+      deviceId: faceDevice.id
+    }
+  };
+}
+
+function faceDevicesWithStatus() {
+  return config.faceDevices.map(publicFaceDevice);
+}
+
+function eligibleFaceDevices() {
+  return config.faceDevices.filter((device) => device.enabled && device.lastTestOk);
+}
+
+function ensureFaceDeviceSyncEligible(faceDevice) {
+  if (!faceDevice.enabled) {
+    const error = new Error('El dispositivo facial no esta habilitado para sincronizacion.');
+    error.status = 400;
+    throw error;
+  }
+  if (!faceDevice.lastTestOk) {
+    const error = new Error('Prueba correctamente la comunicacion del dispositivo antes de sincronizar.');
+    error.status = 400;
+    throw error;
+  }
+}
+
+async function persistFaceDevices(nextDevices) {
+  await saveRuntimeConfig({
+    mockDevice: config.mockDevice,
+    faceDevice: config.faceDevice,
+    hikvision: config.hikvision,
+    dahua: config.dahua,
+    faceDevices: nextDevices,
+    eolo: config.eolo,
+    openaiVision: config.openaiVision,
+    operator: config.operator
+  });
+}
+
+function faceDeviceConnectionSignature(faceDevice = {}) {
+  return JSON.stringify({
+    type: faceDevice.type,
+    protocol: faceDevice.protocol,
+    host: faceDevice.host,
+    port: Number(faceDevice.port || 80),
+    username: faceDevice.username,
+    localDeviceId: faceDevice.localDeviceId || '',
+    doorNo: Number(faceDevice.doorNo ?? 0)
+  });
+}
+
+async function updateFaceDeviceTestState(deviceId, result) {
+  const nextDevices = config.faceDevices.map((device) =>
+    device.id === deviceId
+      ? {
+        ...device,
+        lastTestOk: Boolean(result.ok),
+        lastTestAt: new Date().toISOString(),
+        lastTestMessage: result.message || (result.ok ? 'Respuesta valida.' : 'Prueba fallida.'),
+        lastTestStatus: result.status ? String(result.status) : '',
+        lastTestTarget: result.target || ''
+      }
+      : device
+  );
+  await persistFaceDevices(nextDevices);
+}
+
+async function runEoloUserSyncForEligibleFaceDevices(options = {}) {
+  if (eoloUserSync.running) {
+    return { ok: true, skipped: true, reason: 'sync-running' };
+  }
+  eoloUserSync.running = true;
+  eoloUserSync.lastError = null;
+  const startedAt = new Date().toISOString();
+  try {
+    const tokenContext = resolveEoloUserSyncToken({
+      ...options,
+      allowSavedConfigFallback: !options.scheduled
+    });
+    if (!tokenContext.token) {
+      const error = new Error(
+        options.scheduled
+          ? 'No hay una sesion EOLO activa para ejecutar la sincronizacion automatica de usuarios.'
+          : 'No hay token EOLO disponible para sincronizar usuarios.'
+      );
+      error.status = 401;
+      error.tokenSource = tokenContext.source;
+      throw error;
+    }
+    const cloud = await downloadEoloSnapshotFromOperatorPermissions({
+      ...options,
+      token: tokenContext.token,
+      userId: tokenContext.userId,
+      tokenSource: tokenContext.source,
+      accessId: config.eolo.access,
+      allowWhileFullRunning: true
+    });
+    const device = await applySnapshotToEligibleFaceDevices({ allowWhileFullRunning: true });
+    const result = {
+      ok: device.ok,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      cloud,
+      device,
+      cloudCount: cloud.cloudCount,
+      validCloudCount: cloud.validCloudCount,
+      skippedInvalid: cloud.skippedInvalid,
+      targetCount: device.targetCount,
+      successCount: device.successCount,
+      failedCount: device.failedCount,
+      results: device.results,
+      tokenSource: tokenContext.source,
+      operatorUserId: tokenContext.userId || ''
+    };
+    eoloUserSync.lastRunAt = result.completedAt;
+    eoloUserSync.lastResult = result;
+    await log(result.ok ? 'info' : 'warn', 'Sincronizacion EOLO multi-dispositivo completada', result);
+    return result;
+  } catch (error) {
+    eoloUserSync.lastRunAt = new Date().toISOString();
+    eoloUserSync.lastError = error.message;
+    throw error;
+  } finally {
+    eoloUserSync.running = false;
+  }
+}
+
+async function downloadEoloSnapshotFromOperatorPermissions(options = {}) {
+  if (eoloUserSync.cloudRunning || (eoloUserSync.running && !options.allowWhileFullRunning)) {
+    return { ok: true, skipped: true, reason: 'cloud-sync-running' };
+  }
+  const accessId = String(options.accessId || config.eolo.access || '').trim();
+  if (!accessId) {
+    const error = new Error('Configura el acceso activo antes de descargar PermisoAccesos.');
+    error.status = 400;
+    throw error;
+  }
+  const token = String(options.token || '').trim();
+  if (!token) {
+    const error = new Error('No hay token EOLO disponible para descargar PermisoAccesos.');
+    error.status = 401;
+    error.tokenSource = options.tokenSource || 'missing';
+    throw error;
+  }
+
+  eoloUserSync.cloudRunning = true;
+  eoloUserSync.lastCloudError = null;
+  const startedAt = new Date().toISOString();
+  try {
+    await log('info', 'Descargando PermisoAccesos EOLO desde Cloud', {
+      accessId,
+      sourceType: OPERATOR_ACCESS_PERMISSION_DATA_TYPE,
+      tokenSource: options.tokenSource || 'unknown'
+    });
+    const session = { token, userId: options.userId || '' };
+    const cloudPermissions = await fetchOperatorCloudAccessPermissions(session, accessId);
+    const ensuredPermissions = await ensureOperatorCloudAccessPermissionsId2(
+      session,
+      cloudPermissions.permissions,
+      accessId
+    );
+    const snapshot = await writeOperatorAccessPermissionsSnapshot(accessId, ensuredPermissions, {
+      validAfter: cloudPermissions.validAfter,
+      sourceCount: cloudPermissions.sourceCount,
+      skippedExpired: cloudPermissions.skippedExpired
+    });
+    const permissions = snapshot.permissions || [];
+    const employees = operatorAccessPermissionsToDeviceEmployees(permissions);
+    const result = {
+      ok: true,
+      step: 'cloud',
+      sourceType: OPERATOR_ACCESS_PERMISSION_DATA_TYPE,
+      access: accessId,
+      endpoint: operatorDataUrl(OPERATOR_ACCESS_PERMISSION_DATA_TYPE),
+      validAfter: snapshot.validAfter,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      cloudCount: permissions.length,
+      sourceCount: snapshot.sourceCount,
+      validCloudCount: employees.length,
+      skippedInvalid: 0,
+      skippedExpired: snapshot.skippedExpired,
+      skippedForDeviceCount: permissions.length - employees.length,
+      snapshotFile: path.basename(eoloUserSync.snapshotPath),
+      permissionSnapshotFile: path.basename(operatorAccessPermissionsSnapshotPath()),
+      permissionsSummary: summarizeOperatorAccessPermissions(permissions),
+      tokenSource: options.tokenSource || 'unknown',
+      operatorUserId: options.userId || ''
+    };
+    await eoloUserSync.writeCloudSnapshot({ permissions, employees, result });
+    eoloUserSync.lastCloudRunAt = result.completedAt;
+    eoloUserSync.lastCloudResult = result;
+    await log('info', 'Descarga de PermisoAccesos EOLO completada', result);
+    return {
+      ...result,
+      permissions,
+      summary: result.permissionsSummary
+    };
+  } catch (error) {
+    eoloUserSync.lastCloudRunAt = new Date().toISOString();
+    eoloUserSync.lastCloudError = error.message;
+    throw error;
+  } finally {
+    eoloUserSync.cloudRunning = false;
+  }
+}
+
+async function applySnapshotToEligibleFaceDevices(options = {}) {
+  if (eoloUserSync.deviceRunning || (eoloUserSync.running && !options.allowWhileFullRunning)) {
+    return { ok: true, skipped: true, reason: 'device-sync-running' };
+  }
+
+  const targets = eligibleFaceDevices();
+  if (!targets.length) {
+    const result = {
+      ok: false,
+      step: 'device',
+      skipped: true,
+      reason: 'no-eligible-face-devices',
+      message: 'No hay dispositivos faciales habilitados y probados para sincronizar.',
+      targetCount: 0,
+      successCount: 0,
+      failedCount: 0,
+      results: []
+    };
+    eoloUserSync.lastDeviceRunAt = new Date().toISOString();
+    eoloUserSync.lastDeviceResult = result;
+    eoloUserSync.lastDeviceError = result.message;
+    return result;
+  }
+
+  eoloUserSync.deviceRunning = true;
+  eoloUserSync.lastDeviceError = null;
+  const startedAt = new Date().toISOString();
+  const results = [];
+  try {
+    for (const target of targets) {
+      const sync = new EoloUserSync(createFaceDeviceClient(target), eoloClient);
+      try {
+        const result = await sync.applySnapshotToDevice({ allowWhileFullRunning: true });
+        results.push({
+          ok: true,
+          deviceId: target.id,
+          type: target.type,
+          name: target.name,
+          host: target.host,
+          result
+        });
+      } catch (error) {
+        results.push({
+          ok: false,
+          deviceId: target.id,
+          type: target.type,
+          name: target.name,
+          host: target.host,
+          error: error.message
+        });
+      }
+    }
+    const successCount = results.filter((item) => item.ok).length;
+    const failedCount = results.length - successCount;
+    const result = {
+      ok: failedCount === 0,
+      step: 'device',
+      startedAt,
+      completedAt: new Date().toISOString(),
+      targetCount: targets.length,
+      successCount,
+      failedCount,
+      results
+    };
+    eoloUserSync.lastDeviceRunAt = result.completedAt;
+    eoloUserSync.lastDeviceResult = result;
+    eoloUserSync.lastDeviceError = result.ok ? null : `${failedCount} dispositivo(s) fallaron.`;
+    await log(result.ok ? 'info' : 'warn', 'Carga de snapshot EOLO a dispositivos faciales completada', result);
+    return result;
+  } finally {
+    eoloUserSync.deviceRunning = false;
+  }
+}
+
+function normalizeFaceDeviceInput(input = {}, existing = {}) {
+  const type = ['hikvision', 'dahua'].includes(String(input.type || existing.type || '').toLowerCase())
+    ? String(input.type || existing.type).toLowerCase()
+    : 'hikvision';
+  const host = String(input.host ?? existing.host ?? '').trim();
+  const username = String(input.username ?? existing.username ?? '').trim();
+  if (!host) {
+    const error = new Error('La IP o host del dispositivo facial es obligatorio');
+    error.status = 400;
+    throw error;
+  }
+  if (!username) {
+    const error = new Error('El usuario del dispositivo facial es obligatorio');
+    error.status = 400;
+    throw error;
+  }
+  const protocol = String(input.protocol || existing.protocol || 'http').toLowerCase();
+  if (!['http', 'https'].includes(protocol)) {
+    const error = new Error('El protocolo debe ser http o https');
+    error.status = 400;
+    throw error;
+  }
+  const fallbackName = type === 'dahua' ? 'Dahua ASI' : 'Hikvision Mini Moe';
+  return {
+    id: existing.id,
+    type,
+    enabled: input.enabled === undefined ? Boolean(existing.enabled) : Boolean(input.enabled),
+    name: String(input.name || existing.name || fallbackName).trim(),
+    bridgeIdentifier: String(input.bridgeIdentifier || existing.bridgeIdentifier || input.name || fallbackName).trim(),
+    localDeviceId: String(input.localDeviceId ?? existing.localDeviceId ?? '').trim(),
+    controlPointId: String(input.controlPointId ?? input.control_point_id ?? existing.controlPointId ?? '').trim(),
+    controlPointName: String(input.controlPointName ?? input.control_point_name ?? existing.controlPointName ?? '').trim(),
+    protocol,
+    host,
+    port: intInRange(input.port, existing.port || 80, 1, 65535),
+    username,
+    password: input.password === '' ? existing.password || '' : String(input.password ?? existing.password ?? ''),
+    doorNo: intInRange(input.doorNo, existing.doorNo ?? (type === 'dahua' ? 0 : 1), type === 'dahua' ? 0 : 1, 128),
+    planTemplateNo: String(input.planTemplateNo || existing.planTemplateNo || '1'),
+    fdid: String(input.fdid || existing.fdid || '1'),
+    faceLibType: String(input.faceLibType || existing.faceLibType || 'blackFD'),
+    cardType: intInRange(input.cardType, existing.cardType ?? 0, 0, 255),
+    validYears: intInRange(input.validYears, existing.validYears || 10, 1, 50),
+    dedupWindowSeconds: intInRange(input.dedupWindowSeconds, existing.dedupWindowSeconds || 8, 1, 120),
+    eventCodes: String(input.eventCodes ?? existing.eventCodes ?? 'All').trim() || 'All',
+    heartbeatSeconds: intInRange(input.heartbeatSeconds, existing.heartbeatSeconds || 5, 1, 60),
+    streamDesired: Boolean(input.streamDesired ?? existing.streamDesired)
+  };
+}
+
+async function validateFaceDevice(faceDevice) {
+  return validateDeviceConfig({
+    faceDevice: faceDevice.type,
+    [faceDevice.type]: faceDeviceSettingsForClient(faceDevice)
+  }, false);
+}
+
+async function startFaceDeviceStream(faceDevice) {
+  if (config.mockDevice) {
+    const error = new Error('Los streams multiples requieren modo dispositivo real.');
+    error.status = 400;
+    throw error;
+  }
+  const existing = faceDeviceStreams.get(faceDevice.id);
+  if (existing?.running) return existing.status();
+  const stream = createFaceDeviceStream(faceDevice);
+  faceDeviceStreams.set(faceDevice.id, stream);
+  return stream.start();
+}
+
+async function stopFaceDeviceStream(deviceId) {
+  const stream = faceDeviceStreams.get(deviceId);
+  if (!stream) return { running: false, deviceId };
+  const result = stream.stop();
+  faceDeviceStreams.delete(deviceId);
+  return result;
+}
+
+async function setFaceDeviceStreamDesired(deviceId, desired) {
+  await persistFaceDevices(
+    config.faceDevices.map((device) =>
+      device.id === deviceId ? { ...device, streamDesired: Boolean(desired) } : device
+    )
+  );
+}
+
+async function restoreDesiredFaceDeviceStreams() {
+  const targets = config.faceDevices.filter(
+    (device) => device.enabled && device.lastTestOk && device.streamDesired
+  );
+  if (!targets.length) return;
+  const results = [];
+  for (const target of targets) {
+    try {
+      results.push({ deviceId: target.id, ok: true, result: await startFaceDeviceStream(target) });
+    } catch (error) {
+      results.push({ deviceId: target.id, ok: false, error: error.message });
+    }
+  }
+  await log(results.every((item) => item.ok) ? 'info' : 'warn', 'Streams faciales restaurados al iniciar Bridge', {
+    targetCount: targets.length,
+    successCount: results.filter((item) => item.ok).length,
+    failedCount: results.filter((item) => !item.ok).length,
+    results
+  });
+}
+
+function stopAllFaceDeviceStreams() {
+  for (const deviceId of faceDeviceStreams.keys()) {
+    stopFaceDeviceStream(deviceId).catch(() => {});
+  }
 }
 
 function rebuildDeviceClients() {
@@ -1891,12 +2951,159 @@ function rebuildDeviceClients() {
   eventStream = createEventStream();
   taskRunner.device = device;
   eoloUserSync.device = device;
+  eoloUserSync.runHandler = runEoloUserSyncForEligibleFaceDevices;
 }
 
 function getOperatorToken(req) {
   const header = String(req.headers.authorization || '');
   if (header.toLowerCase().startsWith('bearer ')) return header.slice(7).trim();
   return '';
+}
+
+function rememberOperatorCloudSession(session) {
+  if (!session?.token || !session?.userId) return;
+  latestOperatorCloudSession = {
+    token: session.token,
+    userId: session.userId,
+    expiresAt: session.expiresAt || null,
+    operator: session.operator || null,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function forgetOperatorCloudSession(token) {
+  if (token && latestOperatorCloudSession?.token === token) {
+    latestOperatorCloudSession = null;
+  }
+}
+
+function activeOperatorCloudSession() {
+  if (!latestOperatorCloudSession?.token) return null;
+  if (
+    latestOperatorCloudSession.expiresAt &&
+    Date.parse(latestOperatorCloudSession.expiresAt) <= Date.now()
+  ) {
+    latestOperatorCloudSession = null;
+    return null;
+  }
+  return latestOperatorCloudSession;
+}
+
+function operatorAccessVisionCacheKey(session, accessId) {
+  return `${session?.token || ''}:${session?.userId || ''}:${accessId || ''}`;
+}
+
+function rememberOperatorAccessVisionKeys(session, accesses = []) {
+  if (!session?.token) return;
+  for (const access of accesses) {
+    if (!access?.id) continue;
+    const key = firstText(access.accessOpenaiApiKey);
+    const cacheKey = operatorAccessVisionCacheKey(session, access.id);
+    if (key) {
+      operatorAccessVisionKeyCache.set(cacheKey, {
+        accessId: access.id,
+        apiKey: key,
+        updatedAt: new Date().toISOString()
+      });
+    } else {
+      operatorAccessVisionKeyCache.delete(cacheKey);
+    }
+  }
+}
+
+async function resolveOpenAiVisionApiKey(session, accessId = '') {
+  const accessKey = accessId
+    ? firstText(operatorAccessVisionKeyCache.get(operatorAccessVisionCacheKey(session, accessId))?.apiKey)
+    : '';
+  if (accessKey) {
+    return {
+      apiKey: accessKey,
+      source: 'access',
+      label: 'Acceso',
+      accessId,
+      accessKeySet: true,
+      localKeySet: Boolean(config.openaiVision.apiKey)
+    };
+  }
+  if (session?.token && accessId) {
+    const access = await fetchOperatorDataItem(session, 'accesos', accessId)
+      .then((item) => normalizeOperatorAccesses([item])[0])
+      .catch(async (error) => {
+        await log('warn', 'No se pudo consultar AuxKey1 del acceso para OpenAI Vision', {
+          accessId,
+          error: error.message,
+          status: error.status
+        });
+        return null;
+      });
+    if (access) {
+      rememberOperatorAccessVisionKeys(session, [access]);
+      const fetchedAccessKey = firstText(access.accessOpenaiApiKey);
+      if (fetchedAccessKey) {
+        return {
+          apiKey: fetchedAccessKey,
+          source: 'access',
+          label: 'Acceso',
+          accessId,
+          accessKeySet: true,
+          localKeySet: Boolean(config.openaiVision.apiKey)
+        };
+      }
+    }
+  }
+  return {
+    apiKey: config.openaiVision.apiKey,
+    source: config.openaiVision.apiKey ? 'local' : 'missing',
+    label: config.openaiVision.apiKey ? 'Local' : 'Sin key',
+    accessId,
+    accessKeySet: false,
+    localKeySet: Boolean(config.openaiVision.apiKey)
+  };
+}
+
+function resolveEoloUserSyncToken(options = {}) {
+  const allowSavedConfigFallback = options.allowSavedConfigFallback !== false;
+  if (options.token) {
+    return {
+      token: options.token,
+      source: 'request-operator-session',
+      userId: options.userId || ''
+    };
+  }
+  const session = activeOperatorCloudSession();
+  if (session?.token) {
+    return {
+      token: session.token,
+      source: 'active-operator-session',
+      userId: session.userId
+    };
+  }
+  if (allowSavedConfigFallback && config.eolo.token) {
+    return {
+      token: config.eolo.token,
+      source: 'saved-config-token',
+      userId: ''
+    };
+  }
+  return {
+    token: '',
+    source: allowSavedConfigFallback ? 'missing' : 'missing-active-operator-session',
+    userId: ''
+  };
+}
+
+function eoloUserSyncStatus() {
+  const tokenContext = resolveEoloUserSyncToken();
+  const scheduledTokenContext = resolveEoloUserSyncToken({ allowSavedConfigFallback: false });
+  return {
+    ...eoloUserSync.status(),
+    effectiveTokenSet: Boolean(tokenContext.token),
+    tokenSource: tokenContext.source,
+    operatorUserId: tokenContext.userId || '',
+    scheduledTokenSet: Boolean(scheduledTokenContext.token),
+    scheduledTokenSource: scheduledTokenContext.source,
+    scheduledOperatorUserId: scheduledTokenContext.userId || ''
+  };
 }
 
 async function getOperatorSession(req) {
@@ -1911,7 +3118,10 @@ async function getOperatorSession(req) {
 
   const cacheKey = `${token}:${userId}`;
   const cached = operatorCloudSessionCache.get(cacheKey);
-  if (cached && cached.validUntil > Date.now()) return cached.session;
+  if (cached && cached.validUntil > Date.now()) {
+    rememberOperatorCloudSession(cached.session);
+    return cached.session;
+  }
 
   const user = await fetchBubbleUser({ token, userId });
   const session = {
@@ -1920,6 +3130,7 @@ async function getOperatorSession(req) {
     expiresAt: expiresAt || null,
     operator: operatorFromBubbleUser(user, { phone: user['phone number'] })
   };
+  rememberOperatorCloudSession(session);
   const sessionExpiresAt = expiresAt ? Date.parse(expiresAt) : 0;
   const maxValidUntil = Number.isFinite(sessionExpiresAt) && sessionExpiresAt > Date.now()
     ? sessionExpiresAt
@@ -1977,6 +3188,7 @@ async function publicOperatorCloudConfig() {
     deviceDataType: config.operator.deviceDataType,
     deviceId: config.operator.deviceId,
     effectiveDeviceId,
+    serialNumber: operatorBridgeSerial(),
     branchLabel:
       config.operator.appVersion === 'live'
         ? 'Produccion'
@@ -2255,6 +3467,1488 @@ async function fetchOperatorDataCount(session, type, constraints = [], options =
   const remaining = Number(responseBody.remaining || 0);
   const results = Array.isArray(responseBody.results) ? responseBody.results : [];
   return count + remaining || results.length;
+}
+
+async function fetchOperatorCloudAccessPermissions(session, accessId, options = {}) {
+  const validAfterDate = parseOperatorDateValue(options.validAfter) || new Date();
+  const validAfter = validAfterDate.toISOString();
+  const constraints = [
+    { key: 'acceso_custom_accesos', constraint_type: 'equals', value: accessId },
+    { key: OPERATOR_ACCESS_PERMISSION_VALID_UNTIL_FIELD, constraint_type: 'greater than', value: validAfter }
+  ];
+  const items = await fetchOperatorDataList(session, OPERATOR_ACCESS_PERMISSION_DATA_TYPE, constraints, {
+    limit: 100,
+    maxPages: 5,
+    sortField: 'Modified Date',
+    descending: true,
+    timeoutMs: 12000
+  });
+  const needle = normalizeSearchText(options.search || '');
+  const permissions = items
+    .map((item) => normalizeOperatorAccessPermission(item, accessId))
+    .filter((permission) => isOperatorAccessPermissionDownloadable(permission, validAfterDate))
+    .filter((permission) => {
+      if (!needle) return true;
+      return normalizeSearchText([
+        permission.local_id,
+        permission.principal_name,
+        permission.user_name,
+        permission.permission_type,
+        permission.prefix,
+        permission.user_id,
+        permission.card_number,
+        permission.qr_code,
+        permission.plate
+      ].join(' ')).includes(needle);
+    });
+  return {
+    permissions,
+    validAfter,
+    sourceCount: items.length,
+    skippedExpired: items.length - permissions.length
+  };
+}
+
+async function fetchOperatorCloudAccessDevices(session, accessId) {
+  const constraints = [
+    { key: 'acceso_custom_accesos', constraint_type: 'equals', value: accessId }
+  ];
+  const items = await fetchOperatorDataList(session, OPERATOR_ACCESS_DEVICE_DATA_TYPE, constraints, {
+    limit: 100,
+    maxPages: 5,
+    sortField: 'Modified Date',
+    descending: true,
+    timeoutMs: 12000
+  });
+  return items
+    .map((item) => normalizeOperatorAccessDevice(item, accessId))
+    .filter((device) => device.deviceId || device.id);
+}
+
+async function upsertOperatorCloudAccessDevice(session, payload = {}) {
+  const accessId = firstText(payload.accessId, payload.access_id);
+  const seed = firstText(
+    payload.localDeviceId,
+    payload.deviceId,
+    payload.bridgeIdentifier,
+    payload.name,
+    payload.host,
+    crypto.randomUUID()
+  );
+  const deviceId = normalizeBridgeDeviceId(seed);
+  const sn = firstText(payload.bridgeIdentifier, payload.name, payload.host, deviceId);
+  if (!deviceId) {
+    const error = new Error('No se pudo generar un identificador para DispositivosAcceso.');
+    error.status = 400;
+    throw error;
+  }
+
+  const method = String(config.operator.deviceHeartbeatMethod || 'POST').toUpperCase();
+  const bodyPayload = {
+    device_id: deviceId,
+    sn,
+    ...(accessId ? { access_id: accessId } : {}),
+    ...(payload.controlPointId ? { control_point_id: payload.controlPointId } : {}),
+    ...(payload.controlPointName ? { control_point_name: payload.controlPointName } : {}),
+    ...(payload.type ? { face_device_type: payload.type } : {}),
+    ...(payload.host ? { host: payload.host } : {}),
+    ...(payload.port ? { port: payload.port } : {}),
+    ...(payload.protocol ? { protocol: payload.protocol } : {})
+  };
+  const baseUrl = operatorWorkflowUrl(config.operator.deviceHeartbeatEndpoint);
+  const url = method === 'GET' ? withQuery(baseUrl, bodyPayload) : baseUrl;
+  const response = await fetch(url, {
+    method,
+    headers: {
+      ...(method === 'GET' ? {} : { 'Content-Type': 'application/json' }),
+      Authorization: `Bearer ${session.token}`
+    },
+    ...(method === 'GET' ? {} : { body: JSON.stringify(bodyPayload) }),
+    signal: AbortSignal.timeout(12000)
+  });
+  const body = await response.json().catch(async () => ({ raw: await response.text() }));
+  if (!response.ok || body.status === 'error' || body.ok === false) {
+    const error = new Error(bubbleErrorMessage(body, 'No se pudo crear DispositivosAcceso.'));
+    error.status = response.status;
+    error.body = body;
+    throw error;
+  }
+
+  const workflow = body.response || body || {};
+  const normalized = normalizeOperatorAccessDevice(workflow.device || workflow, accessId);
+  const device = {
+    ...normalized,
+    deviceId: normalized.deviceId || deviceId,
+    name: normalized.name || sn || deviceId,
+    label: normalized.label || (sn && sn !== deviceId ? `${sn} · ${deviceId}` : sn || deviceId),
+    accessId: normalized.accessId || accessId,
+    type: normalized.type || firstText(payload.type),
+    host: normalized.host || firstText(payload.host),
+    controlPointId: normalized.controlPointId || firstText(payload.controlPointId),
+    controlPointName: firstText(payload.controlPointName)
+  };
+  await log('info', 'DispositivosAcceso creado o actualizado desde Peatones', {
+    accessId,
+    deviceId,
+    cloudId: device.id || '',
+    controlPointId: payload.controlPointId || ''
+  });
+  return { ok: true, device, workflow };
+}
+
+async function ensureOperatorCloudAccessPermissionsId2(session, permissions = [], accessId = '') {
+  const ensured = [];
+  let assignedCount = 0;
+  for (const permission of permissions) {
+    if (!isCurrentOperatorPermissionId2(permission.id2_text || permission.id2) && assignedCount > 0) {
+      await delay(1100);
+    }
+    const hadCurrentId2 = isCurrentOperatorPermissionId2(permission.id2_text || permission.id2);
+    const ensuredPermission = await ensureOperatorCloudAccessPermissionId2(session, permission, accessId);
+    if (!hadCurrentId2 && isCurrentOperatorPermissionId2(ensuredPermission.id2_text || ensuredPermission.id2)) {
+      assignedCount += 1;
+    }
+    ensured.push(ensuredPermission);
+  }
+  return ensured;
+}
+
+async function ensureOperatorCloudAccessPermissionId2(session, permission = {}, accessId = '') {
+  if (isCurrentOperatorPermissionId2(permission.id2_text || permission.id2)) return permission;
+  if (!permission.id) return permission;
+  try {
+    const result = await assignOperatorCloudAccessPermissionId2(session, {
+      accessId: permission.access_id || accessId,
+      permissionId: permission.id,
+      tipoPermiso: permission.permission_type,
+      tipoEntidad: permission.entity_type
+    });
+    const id2 = normalizeOperatorPermissionId2(result.id2);
+    if (!id2) return permission;
+    return normalizeOperatorAccessPermission(
+      {
+        ...(permission.raw || permission),
+        _id: permission.id,
+        prefijopermisos_text: id2,
+        id2_text: id2,
+        ID2: id2
+      },
+      permission.access_id || accessId
+    );
+  } catch (error) {
+    await log('warn', 'No se pudo asignar ID2 a PermisoAccesos desde EOLO Cloud', {
+      permissionId: permission.id,
+      accessId: permission.access_id || accessId,
+      endpoint: OPERATOR_PERMISSION_ID2_ENDPOINT,
+      error: error.message,
+      status: error.status
+    });
+    return permission;
+  }
+}
+
+async function assignOperatorCloudAccessPermissionId2(
+  session,
+  { accessId = '', permissionId = '', tipoPermiso = '', tipoEntidad = '' } = {}
+) {
+  const method = String(config.operator.permissionId2Method || 'POST').toUpperCase();
+  const bodyPayload = {
+    acceso: accessId,
+    access_id: accessId,
+    ...(permissionId ? { permiso: permissionId, permission_id: permissionId } : {}),
+    tipo_permiso: bubbleAccessPermissionTypeOption(tipoPermiso),
+    tipo_entidad: bubbleAccessPermissionEntityOption(tipoEntidad)
+  };
+  const baseUrl = operatorWorkflowUrl(OPERATOR_PERMISSION_ID2_ENDPOINT);
+  const url = method === 'GET' ? withQuery(baseUrl, bodyPayload) : baseUrl;
+  const response = await fetch(url, {
+    method,
+    headers: {
+      ...(method === 'GET' ? {} : { 'Content-Type': 'application/json' }),
+      Authorization: `Bearer ${session.token}`
+    },
+    ...(method === 'GET' ? {} : { body: JSON.stringify(bodyPayload) }),
+    signal: AbortSignal.timeout(12000)
+  });
+  const body = await response.json().catch(async () => ({ raw: await response.text() }));
+  if (!response.ok || body.status === 'error' || body.ok === false) {
+    const error = new Error(bubbleErrorMessage(body, 'No se pudo generar ID2 para PermisoAccesos.'));
+    error.status = response.status;
+    error.body = body;
+    throw error;
+  }
+  const workflow = body.response || body || {};
+  const id2 = normalizeOperatorPermissionId2(firstText(
+    workflow.id2,
+    workflow.id2_text,
+    workflow.ID2,
+    workflow.permission?.prefijopermisos_text,
+    workflow.permiso?.prefijopermisos_text,
+    workflow.permission?.id2_text,
+    workflow.permiso?.id2_text,
+    workflow.permission?.ID2,
+    workflow.permiso?.ID2
+  ));
+  if (!id2) {
+    const error = new Error('EOLO Cloud no devolvio el ID2 generado para PermisoAccesos.');
+    error.status = 502;
+    error.body = body;
+    throw error;
+  }
+  return {
+    ok: true,
+    id2,
+    permissionId,
+    accessId,
+    workflow
+  };
+}
+
+function bubbleAccessPermissionEntityOption(value = '') {
+  const normalized = normalizeSearchText(value);
+  if (normalized.includes('vehiculo') || normalized.includes('vehicle') || normalized.includes('auto')) {
+    return 'Vehiculo';
+  }
+  if (normalized.includes('persona') || normalized.includes('peaton') || normalized.includes('pedestrian') || normalized.includes('person')) {
+    return 'Persona';
+  }
+  return firstText(value);
+}
+
+function bubbleAccessPermissionTypeOption(value = '') {
+  const normalized = normalizeSearchText(value);
+  if (normalized.includes('residente') || normalized.includes('resident')) return 'Residente';
+  if (normalized.includes('visitante') || normalized.includes('visitor') || normalized.includes('visita')) return 'Visitante';
+  return firstText(value);
+}
+
+function inferOperatorAccessPermissionType(source = {}, rawId2 = '') {
+  const resident = firstThingId(getField(
+    source,
+    'accesoresidente_custom_accesoresidentes',
+    'AccesoResidente',
+    'residente_custom_accesoresidentes',
+    'Residente'
+  ));
+  if (resident) return 'Residente';
+  const legacy = normalizeOperatorPermissionId2(rawId2);
+  if (/(?:VR|PR)\d{14}$/.test(legacy)) return 'Residente';
+  if (/(?:VV|PV)\d{14}$/.test(legacy)) return 'Visitante';
+  if (/^R\d+/.test(legacy)) return 'Residente';
+  if (/^V\d+/.test(legacy)) return 'Visitante';
+  return '';
+}
+
+function normalizeOperatorAccessDevice(item = {}, fallbackAccessId = '') {
+  const source = item && typeof item === 'object' ? item : {};
+  const id = firstThingId(source);
+  const access = getField(source, 'acceso_custom_accesos', 'Acceso', 'access_id', 'id_acceso');
+  const deviceId = firstText(
+    getField(
+      source,
+      'id_text',
+      'ID',
+      'Id',
+      'dispositivo_id_text',
+      'device_id',
+      'deviceId',
+      'id_dispositivo',
+      'id_dispositivo_text',
+      'localDeviceId',
+      'Identificador'
+    )
+  ) || id;
+  const name = firstText(
+    getField(
+      source,
+      'sn_text',
+      'SN',
+      'nombre_text',
+      'nombrelocal_text',
+      'nombre_local_text',
+      'Nombre',
+      'Nombre Local',
+      'name',
+      'display',
+      'bridgeidentifier_text',
+      'identificador_text'
+    )
+  ) || deviceId || id || 'Dispositivo EOLO';
+  const host = firstText(
+    getField(source, 'ip_text', 'ip', 'host_text', 'host', 'url_text', 'direccion_text', 'address')
+  );
+  const type = firstText(
+    getField(
+      source,
+      'tipo_text',
+      'Tipo',
+      'tipo_dispositivo_text',
+      'tipo_option_tipo_dispositivo',
+      'tipo_dispositivo_option_tipo_dispositivo'
+    )
+  );
+  const controlPoint = getField(
+    source,
+    'punto_control_custom_accesoconfiguracion',
+    'puntocontrol_custom_accesoconfiguracion',
+    'accesoconfiguracion_custom_accesoconfiguracion',
+    'PuntoControl',
+    'Punto de Control'
+  );
+  return {
+    id,
+    deviceId,
+    name,
+    label: deviceId && deviceId !== name ? `${name} · ${deviceId}` : name,
+    accessId: firstThingId(access) || fallbackAccessId,
+    type,
+    host,
+    controlPointId: firstThingId(controlPoint),
+    active: firstBooleanOrDefault(
+      getField(source, 'activo_boolean', 'activo', 'Activo', 'active', 'enabled'),
+      true
+    ),
+    lastCommunicationAt: firstText(
+      getField(source, 'ultimacomunicacion_date', 'UltimaComunicacion', 'ultima_comunicacion_date')
+    ),
+    raw: source
+  };
+}
+
+function isBubbleDataTypeNotFoundError(error) {
+  const text = `${error?.message || ''} ${JSON.stringify(error?.body || {})}`.toLowerCase();
+  return Number(error?.status) === 404 && text.includes('type not found');
+}
+
+function operatorAccessPermissionDate(source = {}, item = {}, keys = []) {
+  return bubbleDateToIso(
+    getField(source, ...keys) ||
+    getField(item, ...keys) ||
+    getField(item.raw || {}, ...keys)
+  );
+}
+
+function isOperatorAccessPermissionDownloadable(permission = {}, now = new Date()) {
+  const validUntil = bubbleDateToIso(
+    permission.valid_until ||
+    permission.validity_end ||
+    permission.VigenciaFinal ||
+    permission.vigenciafinal_date ||
+    getField(permission.raw || {}, 'vigenciafinal_date', 'vigencia_final_date', 'VigenciaFinal', 'Vigencia Final')
+  );
+  const validUntilDate = parseOperatorDateValue(validUntil);
+  if (!validUntilDate) return false;
+  return validUntilDate.getTime() > now.getTime();
+}
+
+function filterDownloadableOperatorAccessPermissions(permissions = [], now = new Date()) {
+  const filtered = [];
+  let skippedExpired = 0;
+  for (const permission of permissions) {
+    if (isOperatorAccessPermissionDownloadable(permission, now)) {
+      filtered.push(permission);
+    } else {
+      skippedExpired += 1;
+    }
+  }
+  return {
+    permissions: filtered,
+    skippedExpired,
+    validAfter: now.toISOString()
+  };
+}
+
+function normalizeOperatorAccessPermission(item = {}, fallbackAccessId = '') {
+  const source = operatorAccessPermissionSource(item);
+  const accessId = firstThingId(getField(source, 'acceso_custom_accesos', 'Acceso')) || fallbackAccessId;
+  const residentId = firstThingId(
+    getField(
+      source,
+      'accesoresidente_custom_accesoresidentes',
+      'acceso_residente_custom_accesoresidentes',
+      'AccesoResidente',
+      'Acceso Residente',
+      'residente_custom_accesoresidentes',
+      'Residente'
+    )
+  );
+  const entityType = firstText(
+    getField(
+      source,
+      'tipoentidad_option_tipo_entidad',
+      'tipoentidad_option_tipo_transporte',
+      'tipo_option_tipo_transporte',
+      'tipoentidad_text',
+      'TipoEntidad',
+      'Tipo Entidad',
+      'Tipo'
+    )
+  );
+  const rawPermissionId2 = firstText(
+    getField(
+      source,
+      'prefijopermisos_text',
+      'id2_text',
+      'ID2',
+      'Id2',
+      'id2',
+      'ID 2',
+      'permiso_id2_text',
+      'PermisoID2'
+    )
+  );
+  const explicitPermissionType = firstText(
+    getField(
+      source,
+      'tipopermisoacceso_text',
+      'tipopermiso_text',
+      'permission_type',
+      'tipopermiso_option_tipopermisoacceso',
+      'tipopermisoacceso_option_tipo_permiso_acceso',
+      'tipo_permiso_acceso',
+      'TipoPermisoAcceso',
+      'Tipo Permiso Acceso',
+      'TipoPermiso',
+      'Tipo Permiso',
+      'tipo_text'
+    )
+  );
+  const permissionType = bubbleAccessPermissionTypeOption(
+    explicitPermissionType ||
+      inferOperatorAccessPermissionType(source, rawPermissionId2) ||
+      'PermisoAcceso'
+  );
+  const permissionId2 = normalizeOperatorPermissionId2(rawPermissionId2);
+  const principalName = firstText(
+    getField(
+      source,
+      'nombreprincipal_text',
+      'NombrePrincipal',
+      'Nombre Principal',
+      'nombreusuario_text',
+      'NombreUsuario',
+      'nombre_usuario',
+      'Nombre'
+    )
+  );
+  const plate = normalizeOperatorPlate(firstText(
+    getField(
+      source,
+      'placavehiculo_text',
+      'placa_vehiculo_text',
+      'placa_text',
+      'placas_text',
+      'PlacaVehiculo',
+      'Placa Vehiculo',
+      'Placa',
+      'Placas',
+      'placavehiculo',
+      'placa',
+      'placas'
+    )
+  ));
+  const qrCode = firstText(
+    getField(source, 'codigoqr_text', 'codigo_qr_text', 'CodigoQR', 'Codigo QR', 'codigoqr', 'qr_text')
+  );
+  const cardNumber = firstText(
+    getField(source, 'numerotarjeta_text', 'numero_tarjeta_text', 'NumeroTarjeta', 'Numero Tarjeta', 'tarjeta_text')
+  );
+  const faceImage = firstFileUrl(
+    getField(
+      source,
+      'imangenrostro_image',
+      'imagenrostro_image',
+      'imagen_rostro_image',
+      'ImagenRostro',
+      'ImangenRostro',
+      'Imagen Rostro',
+      'Imagen',
+      'imagen_image',
+      'face_image',
+      'faceImage'
+    ),
+    item.face_image
+  );
+  const validFrom = operatorAccessPermissionDate(source, item, [
+    'vigenciainicial_date',
+    'vigencia_inicial_date',
+    'VigenciaInicial',
+    'Vigencia Inicial'
+  ]);
+  const validUntil = operatorAccessPermissionDate(source, item, [
+    'vigenciafinal_date',
+    'vigencia_final_date',
+    'VigenciaFinal',
+    'Vigencia Final'
+  ]);
+  const currentlyValid = isOperatorAccessPermissionDownloadable({ valid_until: validUntil }, new Date());
+  const active = currentlyValid && !firstBoolean(
+    getField(source, 'deleted', 'deleted_boolean', 'Eliminado', 'eliminado_boolean')
+  ) && firstBooleanOrDefault(
+    getField(source, 'activo_boolean', 'activo', 'Activo', 'active_boolean', 'Aprobado'),
+    true
+  );
+  const automaticOpening = firstBoolean(
+    getField(
+      source,
+      'aperturaautomatica_boolean',
+      'apertura_automatica_boolean',
+      'AperturaAutomatica',
+      'Apertura Automatica',
+      'aperturaautomatica'
+    )
+  );
+  const entityTypeKey = normalizeSearchText(entityType || permissionType);
+  const explicitVehicle = entityTypeKey.includes('vehiculo') ||
+    entityTypeKey.includes('vehicle') ||
+    entityTypeKey.includes('auto');
+  const explicitPedestrian = entityTypeKey.includes('persona') ||
+    entityTypeKey.includes('peaton') ||
+    entityTypeKey.includes('pedestrian') ||
+    entityTypeKey.includes('person');
+  const isVehicle = explicitVehicle || (!explicitPedestrian && Boolean(plate));
+  const isPedestrian = explicitPedestrian || !isVehicle;
+  return {
+    id: firstThingId(item.id, item._id, source._id, source.id),
+    id2: permissionId2,
+    id2_text: permissionId2,
+    device_user_id: permissionId2,
+    id2_current_format: isCurrentOperatorPermissionId2(permissionId2),
+    access_id: accessId,
+    local_id: firstText(getField(source, 'idlocal_text', 'IDLocal', 'IdLocal', 'id_local')),
+    principal_name: principalName,
+    user_name: principalName,
+    entity_type: entityType || (isVehicle ? 'Vehiculo' : 'Persona'),
+    permission_type: permissionType,
+    prefix: permissionId2,
+    resident_id: residentId,
+    user_id: firstThingId(getField(source, 'usuario_user', 'Usuario', 'user')),
+    valid_from: validFrom,
+    valid_until: validUntil,
+    validity_active: currentlyValid,
+    plate,
+    qr_code: qrCode,
+    card_number: cardNumber,
+    face_image: faceImage,
+    automatic_opening: automaticOpening,
+    active,
+    is_pedestrian: isPedestrian,
+    is_vehicle: isVehicle,
+    has_plate: Boolean(plate),
+    has_qr: Boolean(qrCode),
+    has_card: Boolean(cardNumber),
+    has_face: Boolean(faceImage),
+    has_automatic_opening: automaticOpening,
+    created_at: bubbleDateToIso(getField(item, 'Created Date')),
+    modified_at: bubbleDateToIso(getField(item, 'Modified Date')),
+    raw: item
+  };
+}
+
+function operatorAccessPermissionSource(item = {}) {
+  if (item && typeof item._source === 'object') {
+    return {
+      ...item._source,
+      _id: item._id || item._source._id
+    };
+  }
+  if (item && typeof item.raw === 'object') {
+    return {
+      ...item.raw,
+      _id: item.id || item._id || item.raw._id
+    };
+  }
+  if (item && typeof item.response === 'object') {
+    return item.response;
+  }
+  return item || {};
+}
+
+function operatorAccessPermissionSchema() {
+  return {
+    type: OPERATOR_ACCESS_PERMISSION_DATA_TYPE,
+    buildprintType: OPERATOR_ACCESS_PERMISSION_BUILDPRINT_TYPE,
+    display: 'PermisoAccesos',
+    confirmedByBuildprint: {
+      acceso_custom_accesos: 'Acceso',
+      idlocal_text: 'PermisoID',
+      imangenrostro_image: 'ImangenRostro',
+      nombreusuario_text: 'NombreUsuario',
+      placavehiculo_text: 'PlacaVehiculo',
+      prefijopermisos_text: 'ID2',
+      tipo_option_tipo_transporte: 'TipoEntidad',
+      tipopermiso_option_tipopermisoacceso: 'TipoPermisoAcceso',
+      tipopermiso_text: 'TipoPermiso',
+      usuario_user: 'Usuario',
+      vigenciainicial_date: 'VigenciaInicial',
+      vigenciafinal_date: 'VigenciaFinal'
+    },
+    localAliases: {
+      ID2: ['prefijopermisos_text', 'id2_text', 'ID2', 'id2', 'permiso_id2_text'],
+      NombrePrincipal: ['nombreprincipal_text', 'NombrePrincipal', 'nombreusuario_text'],
+      TipoEntidad: ['tipoentidad_option_tipo_entidad', 'tipo_option_tipo_transporte', 'TipoEntidad', 'Tipo'],
+      TipoPermisoAcceso: [
+        'tipopermisoacceso_text',
+        'tipopermiso_text',
+        'tipopermiso_option_tipopermisoacceso',
+        'TipoPermisoAcceso',
+        'TipoPermiso',
+        'Tipo Permiso'
+      ],
+      PlacaVehiculo: ['placavehiculo_text', 'PlacaVehiculo', 'placa_text', 'Placa'],
+      NumeroTarjeta: ['numerotarjeta_text', 'NumeroTarjeta'],
+      CodigoQR: ['codigoqr_text', 'CodigoQR'],
+      AperturaAutomatica: ['aperturaautomatica_boolean', 'AperturaAutomatica'],
+      VigenciaInicial: ['vigenciainicial_date', 'VigenciaInicial', 'Vigencia Inicial'],
+      VigenciaFinal: ['vigenciafinal_date', 'VigenciaFinal', 'Vigencia Final']
+    }
+  };
+}
+
+function summarizeOperatorAccessPermissions(permissions = []) {
+  const activePedestrians = permissions.filter((permission) => permission.active && permission.is_pedestrian);
+  const activeVehicles = permissions.filter((permission) => permission.active && permission.is_vehicle);
+  return {
+    total: permissions.length,
+    pedestrians: activePedestrians.length,
+    faces: activePedestrians.filter((permission) => permission.has_face).length,
+    cards: activePedestrians.filter((permission) => permission.has_card).length,
+    codes: activePedestrians.filter((permission) => permission.has_qr).length,
+    vehicles: activeVehicles.length,
+    vehicle_plates: activeVehicles.filter((permission) => permission.has_plate).length,
+    vehicle_cards: activeVehicles.filter((permission) => permission.has_card).length,
+    vehicle_codes: activeVehicles.filter((permission) => permission.has_qr).length
+  };
+}
+
+function operatorAccessPermissionsToDeviceEmployees(permissions = []) {
+  return permissions
+    .filter((permission) => permission.active !== false && permission.is_pedestrian && !permission.is_vehicle)
+    .map((permission) => {
+      const employeeNo = normalizeOperatorPermissionId2(permission.id2_text || permission.id2);
+      if (!isCurrentOperatorPermissionId2(employeeNo)) return null;
+      return {
+        employeeNo,
+        name: permission.principal_name || permission.user_name || `Permiso ${employeeNo}`,
+        doorNo: (config.faceDevice === 'dahua' ? config.dahua : config.hikvision).doorNo,
+        planTemplateNo: config.hikvision.planTemplateNo,
+        faceUrl: permission.face_image || '',
+        cardNo: permission.card_number || permission.qr_code || employeeNo,
+        qrCode: permission.qr_code || '',
+        sourcePermissionId: permission.id,
+        sourcePermissionId2: employeeNo,
+        sourceEntityType: permission.entity_type || permission.permission_type || ''
+      };
+    })
+    .filter(Boolean);
+}
+
+function operatorAccessPermissionsSnapshotPath() {
+  return path.join(config.dataDir, 'operator-access-permissions.json');
+}
+
+async function writeOperatorAccessPermissionsSnapshot(accessId, permissions = [], options = {}) {
+  await fs.promises.mkdir(config.dataDir, { recursive: true });
+  const now = parseOperatorDateValue(options.validAfter) || new Date();
+  const downloadable = filterDownloadableOperatorAccessPermissions(permissions, now);
+  const currentPermissions = downloadable.permissions;
+  const payload = {
+    ok: true,
+    access: accessId,
+    downloadedAt: new Date().toISOString(),
+    validAfter: options.validAfter || downloadable.validAfter,
+    sourceCount: Number.isFinite(Number(options.sourceCount)) ? Number(options.sourceCount) : permissions.length,
+    skippedExpired: (Number(options.skippedExpired) || 0) + downloadable.skippedExpired,
+    total: currentPermissions.length,
+    summary: summarizeOperatorAccessPermissions(currentPermissions),
+    permissions: currentPermissions
+  };
+  await fs.promises.writeFile(operatorAccessPermissionsSnapshotPath(), JSON.stringify(payload, null, 2), 'utf8');
+  return payload;
+}
+
+function readOperatorAccessPermissionsSnapshot(accessId, search = '') {
+  try {
+    const payload = JSON.parse(fs.readFileSync(operatorAccessPermissionsSnapshotPath(), 'utf8'));
+    if (accessId && payload.access && payload.access !== accessId) return null;
+    const needle = normalizeSearchText(search);
+    const permissions = Array.isArray(payload.permissions)
+      ? payload.permissions.map((permission) => normalizeOperatorAccessPermission(permission, accessId))
+      : [];
+    const current = filterDownloadableOperatorAccessPermissions(permissions).permissions;
+    const filtered = !needle ? current : current.filter((permission) => normalizeSearchText([
+      permission.local_id,
+      permission.principal_name,
+      permission.permission_type,
+      permission.prefix,
+      permission.plate,
+      permission.card_number,
+      permission.qr_code
+    ].join(' ')).includes(needle));
+    return {
+      ...payload,
+      permissionsTotalBeforeValidityFilter: permissions.length,
+      permissions: filtered
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function handleFacialAccessEvent(record = {}) {
+  if (record.operationalDuplicate) return;
+  if (!isMovementCandidateFacialEvent(record)) {
+    await log('debug', 'Evento facial ignorado para movimiento por no ser acceso reconocido', {
+      faceDeviceId: record.faceDeviceId,
+      eventType: record.eventType,
+      eventState: record.eventState,
+      employeeNo: record.employeeNo,
+      cardNo: record.cardNo
+    });
+    return;
+  }
+
+  const accessId = firstText(config.eolo.access, record.access_id, record.accessId);
+  const permission = findFacialPermissionForEvent(record, accessId);
+  if (!permission) {
+    await log('info', 'Evento facial sin PermisoAccesos local; no se crea movimiento', {
+      faceDeviceId: record.faceDeviceId,
+      employeeNo: record.employeeNo,
+      cardNo: record.cardNo,
+      accessId
+    });
+    return;
+  }
+  if (!permission.active || !permission.is_pedestrian || permission.is_vehicle) {
+    await log('info', 'Evento facial no corresponde a permiso peatonal activo; no se crea movimiento', {
+      permissionId: permission.id,
+      active: permission.active,
+      entityType: permission.entity_type,
+      accessId: permission.access_id || accessId
+    });
+    return;
+  }
+
+  const eventKey = facialMovementEventKey(record, permission);
+  if (rememberFacialMovementEvent(eventKey)) {
+    await log('debug', 'Movimiento facial duplicado ignorado', {
+      eventKey,
+      permissionId: permission.id,
+      faceDeviceId: record.faceDeviceId
+    });
+    return;
+  }
+
+  const faceDevice = faceDeviceForEvent(record);
+  const session = activeOperatorCloudSession();
+  const context = await resolveFacialMovementContext({ record, permission, faceDevice, session });
+  if (!context.accessId || !context.controlPointId) {
+    await log('warn', 'No se pudo crear movimiento facial por falta de acceso o punto de control', {
+      permissionId: permission.id,
+      accessId: context.accessId,
+      controlPointId: context.controlPointId,
+      faceDeviceId: record.faceDeviceId,
+      contextSource: context.source
+    });
+    return;
+  }
+
+  const movementPermission = await permissionWithResidentForFacialMovement(permission, context.accessId, session);
+  if (!movementPermission.resident_id) {
+    await log('warn', 'No se pudo crear movimiento facial por falta de AccesoResidente en PermisoAccesos', {
+      permissionId: permission.id,
+      permissionId2: permission.id2,
+      userId: permission.user_id,
+      accessId: context.accessId,
+      faceDeviceId: record.faceDeviceId
+    });
+    return;
+  }
+
+  const movementPayload = await ensureOperatorMovementLocalId2(
+    facialEventMovementPayload({ record, permission: movementPermission, faceDevice, context }),
+    context.accessId
+  );
+
+  try {
+    if (config.operator.authMode === 'cloud' && session?.token) {
+      const createdMovement = await createOperatorCloudMovement(
+        session,
+        movementPayload,
+        context.accessId,
+        context.controlPointId
+      );
+      invalidateOperatorInventorySummary(context.accessId);
+      await recordOperatorMovementEvent({ operatorSession: session }, {
+        payload: movementPayload,
+        movement: createdMovement,
+        accessId: context.accessId,
+        controlPointId: context.controlPointId,
+        source: 'facial-stream-cloud'
+      });
+      await log('info', 'Movimiento peatonal creado desde evento facial', {
+        movementId: createdMovement?.id || createdMovement?.uid_bubble || '',
+        permissionId: permission.id,
+        faceDeviceId: record.faceDeviceId,
+        accessId: context.accessId,
+        controlPointId: context.controlPointId
+      });
+      return;
+    }
+
+    const missingSessionError = new Error('No hay sesion EOLO activa para sincronizar movimiento facial.');
+    missingSessionError.status = 401;
+    const pending = await createPendingOperatorMovement(
+      movementPayload,
+      context.accessId,
+      context.controlPointId,
+      missingSessionError
+    );
+    await recordOperatorMovementEvent({ operatorSession: { operator: { name: 'Reconocimiento facial' } } }, {
+      payload: movementPayload,
+      movement: pending.movement,
+      accessId: context.accessId,
+      controlPointId: context.controlPointId,
+      source: 'facial-stream-local-pending'
+    });
+    await log('warn', 'Movimiento facial guardado pendiente por falta de sesion EOLO activa', {
+      localId: pending.id,
+      permissionId: permission.id,
+      faceDeviceId: record.faceDeviceId,
+      accessId: context.accessId,
+      controlPointId: context.controlPointId
+    });
+  } catch (error) {
+    if (!isRetryableOperatorCloudError(error)) throw error;
+    const pending = await createPendingOperatorMovement(
+      movementPayload,
+      context.accessId,
+      context.controlPointId,
+      error
+    );
+    await recordOperatorMovementEvent({ operatorSession: session || { operator: { name: 'Reconocimiento facial' } } }, {
+      payload: movementPayload,
+      movement: pending.movement,
+      accessId: context.accessId,
+      controlPointId: context.controlPointId,
+      source: 'facial-stream-local-pending'
+    });
+    await log('warn', 'Movimiento facial guardado localmente por EOLO Cloud inaccesible', {
+      localId: pending.id,
+      permissionId: permission.id,
+      faceDeviceId: record.faceDeviceId,
+      accessId: context.accessId,
+      controlPointId: context.controlPointId,
+      error: error.message
+    });
+  }
+}
+
+function isMovementCandidateFacialEvent(record = {}) {
+  const identifier = firstText(record.employeeNo, record.employeeNoString, record.cardNo);
+  if (!identifier) return false;
+  const mode = normalizeSearchText(record.currentVerifyMode);
+  const typeText = normalizeSearchText([record.eventType, record.majorEventType].filter(Boolean).join(' '));
+  const stateText = normalizeSearchText([record.eventState, record.subEventType].filter(Boolean).join(' '));
+  if (/heartbeat|keepalive/.test(typeText)) return false;
+  if (/denied|deny|failed|fail|invalid|forbid|reject|alarm/.test(stateText)) return false;
+  if (!mode) return true;
+  return /face|rostro|card|tarjeta|finger|huella|access|verify/.test(mode);
+}
+
+function findFacialPermissionForEvent(record = {}, accessId = '') {
+  const snapshot = readOperatorAccessPermissionsSnapshot(accessId, '');
+  const permissions = snapshot?.permissions || [];
+  if (!permissions.length) return null;
+  const identifiers = [
+    firstText(record.employeeNo, record.employeeNoString),
+    firstText(record.cardNo)
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  if (!identifiers.length) return null;
+  const normalizedIds = new Set(identifiers.map((value) => normalizeSearchText(value)));
+  return permissions.find((permission) => {
+    const candidates = [
+      permission.id2,
+      permission.id2_text,
+      permission.device_user_id,
+      permission.id,
+      permission.local_id,
+      permission.card_number,
+      permission.qr_code
+    ]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    return candidates.some((value) => normalizedIds.has(normalizeSearchText(value)));
+  }) || null;
+}
+
+function faceDeviceForEvent(record = {}) {
+  const id = String(record.faceDeviceId || '').trim();
+  return config.faceDevices.find((item) => item.id === id) ||
+    (record.faceDeviceType === config.faceDevice ? activeFaceDeviceSettings() : {}) ||
+    {};
+}
+
+function facialMovementEventKey(record = {}, permission = {}) {
+  return firstText(record.serialNo)
+    ? `serial:${record.faceDeviceId || ''}:${record.serialNo}`
+    : `permission:${record.faceDeviceId || ''}:${permission.id2 || permission.id || record.employeeNo || record.cardNo}`;
+}
+
+function rememberFacialMovementEvent(key = '') {
+  if (!key) return false;
+  if (facialMovementEventKeys.has(key)) return true;
+  facialMovementEventKeys.add(key);
+  if (facialMovementEventKeys.size > 2000) {
+    const keep = [...facialMovementEventKeys].slice(-1000);
+    facialMovementEventKeys.clear();
+    keep.forEach((item) => facialMovementEventKeys.add(item));
+  }
+  return false;
+}
+
+async function resolveFacialMovementContext({ record = {}, permission = {}, faceDevice = {}, session = null } = {}) {
+  const accessId = firstText(permission.access_id, config.eolo.access, record.access_id, record.accessId);
+  const configuredControlPointId = firstText(
+    faceDevice.controlPointId,
+    faceDevice.control_point_id,
+    faceDevice.id_punto_control,
+    record.control_point_id,
+    record.controlPointId
+  );
+  if (configuredControlPointId) {
+    return {
+      accessId,
+      controlPointId: configuredControlPointId,
+      controlPointName: firstText(faceDevice.controlPointName, record.control_point_name, record.doorNo),
+      controlPointAction: firstText(faceDevice.controlPointAction),
+      controlPointActionMode: firstText(faceDevice.controlPointActionMode),
+      source: 'configured-device'
+    };
+  }
+  if (!session?.token || !accessId) {
+    return { accessId, controlPointId: '', source: 'missing-session-or-access' };
+  }
+
+  const cacheKey = `${session.userId || 'operator'}:${accessId}:${record.faceDeviceId || ''}`;
+  const cached = facialMovementContextCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.context;
+
+  const points = await fetchOperatorCloudControlPoints(session, accessId).catch(async (error) => {
+    await log('warn', 'No se pudieron consultar puntos de control para movimiento facial', {
+      accessId,
+      faceDeviceId: record.faceDeviceId,
+      error: error.message,
+      status: error.status
+    });
+    return [];
+  });
+  const activePoints = points.filter((point) => point.active !== false);
+  const matched = matchFacialControlPoint(activePoints, { record, faceDevice });
+  const selected = matched || activePoints[0] || null;
+  const source = matched
+    ? 'matched-cloud-control-point'
+    : activePoints.length === 1
+      ? 'single-cloud-control-point'
+      : selected
+        ? 'first-cloud-control-point'
+        : 'no-control-point';
+  if (selected && source === 'first-cloud-control-point') {
+    await log('warn', 'Movimiento facial usara el primer punto de control disponible', {
+      accessId,
+      selectedControlPointId: selected.id,
+      selectedControlPointName: selected.name,
+      faceDeviceId: record.faceDeviceId,
+      availableControlPoints: activePoints.length
+    });
+  }
+  const context = {
+    accessId,
+    controlPointId: selected?.id || '',
+    controlPointName: selected?.name || firstText(record.doorNo),
+    controlPointAction: selected?.actionType || '',
+    controlPointActionMode: selected?.actionMode || '',
+    source
+  };
+  facialMovementContextCache.set(cacheKey, {
+    context,
+    expiresAt: Date.now() + 5 * 60 * 1000
+  });
+  return context;
+}
+
+function matchFacialControlPoint(points = [], { record = {}, faceDevice = {} } = {}) {
+  const needles = [
+    faceDevice.controlPointId,
+    faceDevice.localDeviceId,
+    faceDevice.id,
+    faceDevice.host,
+    faceDevice.name,
+    faceDevice.bridgeIdentifier,
+    record.deviceName,
+    record.device,
+    record.doorNo
+  ]
+    .map((value) => normalizeSearchText(value))
+    .filter((value) => value && value.length > 1);
+  if (!needles.length) return null;
+  return points.find((point) => {
+    const haystack = normalizeSearchText(JSON.stringify({
+      id: point.id,
+      name: point.name,
+      type: point.type,
+      entryCamera: point.entryCamera,
+      exitCamera: point.exitCamera,
+      cameras: point.cameras,
+      cameraIds: point.cameraIds,
+      raw: point.raw
+    }));
+    return needles.some((needle) => haystack.includes(needle));
+  }) || null;
+}
+
+function facialEventMovementPayload({ record = {}, permission = {}, faceDevice = {}, context = {} } = {}) {
+  const permissionId2 = normalizeOperatorPermissionId2(firstText(permission.id2_text, permission.id2, record.employeeNo));
+  const residentId = operatorPermissionResidentId(permission);
+  const personName = normalizeOperatorPersonName(firstText(
+    permission.principal_name,
+    permission.user_name,
+    record.name,
+    `Permiso ${permission.id || record.employeeNo || record.cardNo}`
+  ));
+  const faceImage = firstFileUrl(permission.face_image);
+  const cardOrQr = firstText(permission.card_number, permission.qr_code, record.cardNo);
+  const deviceName = firstText(faceDevice.name, faceDevice.bridgeIdentifier, record.deviceName, record.device);
+  const verifyMode = firstText(record.currentVerifyMode, record.subEventType, record.eventType);
+  const controlPointName = firstText(context.controlPointName, context.controlPointId, 'punto de control');
+  const automaticNote = `Evento de peatón generado automáticamente por reconocimiento facial en ${controlPointName} (${permissionId2 || permission.id || record.employeeNo || 'sin ID2'})`;
+  return {
+    access_id: context.accessId,
+    id_acceso: context.accessId,
+    control_point_id: context.controlPointId,
+    id_punto_control: context.controlPointId,
+    punto_control_name: context.controlPointName,
+    control_point_action: context.controlPointAction || 'Solo Registrar',
+    control_point_action_mode: context.controlPointActionMode || 'register',
+    kind: 'Peaton',
+    tipo_transporte: 'Peaton',
+    movement_type: firstText(permission.permission_type, 'PermisoAcceso'),
+    razon_acceso: firstText(permission.permission_type, 'PermisoAcceso'),
+    visitor_name: personName,
+    nombre_visitante: personName,
+    nombre_responsable: personName,
+    resident_id: residentId,
+    residente_id: residentId,
+    usuario_id: permission.user_id || '',
+    permission_user_id: permission.user_id || '',
+    permiso_acceso_id: permission.id || '',
+    permisoacceso_id: permission.id || '',
+    source_permission_id: permission.id || '',
+    permiso_acceso_id2: permissionId2,
+    permission_id2: permissionId2,
+    face_employee_no: firstText(record.employeeNo, permissionId2, permission.id),
+    face_device_id: firstText(record.faceDeviceId, faceDevice.id),
+    face_device_type: firstText(record.faceDeviceType, faceDevice.type),
+    face_device_name: deviceName,
+    face_event_serial: firstText(record.serialNo),
+    face_event_type: firstText(record.eventType, record.majorEventType),
+    face_verify_mode: verifyMode,
+    card_number: cardOrQr,
+    numero_tarjeta: firstText(permission.card_number, record.cardNo),
+    qr_code: permission.qr_code || '',
+    codigo_qr: permission.qr_code || '',
+    id_photo_url: faceImage,
+    identification_photo_url: faceImage,
+    face_image_url: faceImage,
+    imagen_rostro_url: faceImage,
+    notes: automaticNote,
+    nota: automaticNote,
+    approved_by_device: true,
+    aprobado_por_dispositivo: true,
+    status: 'Ingresado',
+    operator_name: 'Reconocimiento facial',
+    source: 'facial-stream'
+  };
+}
+
+async function permissionWithResidentForFacialMovement(permission = {}, accessId = '', session = null) {
+  const existingResidentId = operatorPermissionResidentId(permission);
+  if (existingResidentId) return { ...permission, resident_id: existingResidentId };
+  const userId = firstThingId(permission.user_id, permission.permission_user_id);
+  if (!session?.token || !userId || !accessId) return permission;
+  const residentId = await findOperatorAccessResidentIdByUser(session, accessId, userId).catch(async (error) => {
+    await log('warn', 'No se pudo resolver AccesoResidente para movimiento facial', {
+      permissionId: permission.id,
+      permissionId2: permission.id2,
+      userId,
+      accessId,
+      error: error.message,
+      status: error.status
+    });
+    return '';
+  });
+  return residentId ? { ...permission, resident_id: residentId } : permission;
+}
+
+function operatorPermissionResidentId(permission = {}) {
+  return firstThingId(
+    permission.resident_id,
+    permission.residente_id,
+    getField(
+      permission.raw || {},
+      'accesoresidente_custom_accesoresidentes',
+      'acceso_residente_custom_accesoresidentes',
+      'AccesoResidente',
+      'Acceso Residente',
+      'residente_custom_accesoresidentes',
+      'Residente'
+    )
+  );
+}
+
+async function findOperatorAccessResidentIdByUser(session, accessId, userId) {
+  const constraints = [
+    { key: 'acceso_custom_accesos', constraint_type: 'equals', value: accessId },
+    { key: 'usuario1_user', constraint_type: 'equals', value: userId },
+    { key: 'deleted_boolean', constraint_type: 'not equal', value: true }
+  ];
+  const residents = await fetchOperatorDataList(session, 'accesoresidentes', constraints, {
+    limit: 1,
+    maxPages: 1,
+    sortField: 'Created Date',
+    descending: true,
+    timeoutMs: 12000
+  });
+  return firstThingId(residents[0]);
+}
+
+async function mergeOperatorAccessPermissionSnapshot(accessId, permission) {
+  const current = readOperatorAccessPermissionsSnapshot(accessId)?.permissions || [];
+  const next = current.some((item) => item.id === permission.id)
+    ? current.map((item) => (item.id === permission.id ? permission : item))
+    : [permission, ...current];
+  return writeOperatorAccessPermissionsSnapshot(accessId, next);
+}
+
+function normalizeOperatorAccessPermissionPatch(body = {}, accessId = '') {
+  const payload = {
+    acceso_custom_accesos: accessId
+  };
+  if (body.id2 !== undefined || body.id2_text !== undefined || body.ID2 !== undefined) {
+    payload.prefijopermisos_text = normalizeOperatorPermissionId2(firstText(body.id2_text, body.id2, body.ID2));
+  }
+  if (body.local_id !== undefined || body.PermisoID !== undefined) {
+    payload.idlocal_text = firstText(body.local_id, body.PermisoID);
+  }
+  if (body.principal_name !== undefined || body.NombrePrincipal !== undefined) {
+    payload.nombreusuario_text = firstText(body.principal_name, body.NombrePrincipal);
+  }
+  if (payload.prefijopermisos_text === undefined && (body.prefix !== undefined || body.PermisoPrefijo !== undefined)) {
+    payload.prefijopermisos_text = firstText(body.prefix, body.PermisoPrefijo);
+  }
+  if (body.face_image !== undefined || body.ImangenRostro !== undefined || body.ImagenRostro !== undefined) {
+    payload.imangenrostro_image = firstText(body.face_image, body.ImangenRostro, body.ImagenRostro);
+  }
+  if (body.user_id !== undefined || body.Usuario !== undefined) {
+    payload.usuario_user = firstThingId(body.user_id, body.Usuario);
+  }
+  return payload;
+}
+
+function localFallbackAccessPermissions(accessId, search = '') {
+  const items = [
+    normalizeOperatorAccessPermission({
+      _id: 'local-permiso-demo',
+      'Created Date': Date.now(),
+      'Modified Date': Date.now(),
+      acceso_custom_accesos: accessId,
+      idlocal_text: '12345',
+      nombreusuario_text: 'FAISAN',
+      prefijopermisos_text: 'A',
+      vigenciafinal_date: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      usuario_user: 'local-user-demo'
+    }, accessId)
+  ];
+  const needle = normalizeSearchText(search);
+  if (!needle) return items;
+  return items.filter((item) => normalizeSearchText([
+    item.local_id,
+    item.user_name,
+    item.prefix,
+    item.user_id
+  ].join(' ')).includes(needle));
+}
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function readLocalEventHistory() {
+  const filePath = path.join(config.dataDir, 'events.jsonl');
+  const fromFile = fs.existsSync(filePath)
+    ? fs.readFileSync(filePath, 'utf8')
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+    : [];
+  const recentMemoryEvents = getEvents(500).reverse();
+  const seen = new Set();
+  return [...fromFile, ...recentMemoryEvents].filter((event) => {
+    const key = [
+      event.receivedAt,
+      event.dateTime,
+      event.serialNo,
+      event.eventType,
+      event.employeeNo,
+      event.plate || event.placa
+    ].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function parseEventBoundary(value, edge = 'start') {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const [year, month, day] = raw.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    if (edge === 'end') date.setHours(23, 59, 59, 999);
+    else date.setHours(0, 0, 0, 0);
+    return date;
+  }
+  return parseOperatorDateValue(raw);
+}
+
+function normalizeLocalEvent(event = {}) {
+  const raw = event.raw || {};
+  const access = raw.AccessControllerEvent || event.AccessControllerEvent || {};
+  const timestamp = firstText(
+    event.detected_at,
+    event.detectedAt,
+    event.dateTime,
+    event.receivedAt,
+    event.ts,
+    raw.dateTime
+  );
+  const plate = firstText(
+    event.plate,
+    event.placa,
+    event.license_plate,
+    event.licensePlate,
+    getField(event, 'plate_text', 'placas_text'),
+    raw.plate,
+    raw.placa,
+    raw.licensePlate
+  );
+  const personName = firstText(
+    event.name,
+    event.person_name,
+    event.personName,
+    event.user_name,
+    access.name,
+    raw.name
+  );
+  const employeeNo = firstText(
+    event.employeeNo,
+    event.employee_no,
+    event.employeeNoString,
+    access.employeeNoString,
+    access.employeeNo
+  );
+  const vehicleClass = firstText(
+    event.vehicle_class,
+    event.vehicleClass,
+    raw.vehicle_class,
+    raw.vehicleClass
+  );
+  const camera = firstText(
+    event.camera,
+    event.camera_name,
+    event.cameraName,
+    event.channelName,
+    raw.camera,
+    raw.channelName,
+    access.deviceName
+  );
+  const device = firstText(
+    event.device,
+    event.deviceName,
+    event.device_name,
+    event.ipAddress,
+    raw.deviceName,
+    raw.ipAddress,
+    access.deviceName
+  );
+  const type = firstText(
+    event.type,
+    event.eventType,
+    event.event_type,
+    raw.eventType,
+    access.subEventType,
+    access.majorEventType,
+    'Evento'
+  );
+  const hasVehicle = Boolean(plate || vehicleClass || normalizeSearchText(type).includes('vehicle'));
+  const hasPerson = Boolean(personName || employeeNo || normalizeSearchText(type).includes('face'));
+  const objectType = hasVehicle && hasPerson
+    ? 'Vehiculo y persona'
+    : hasVehicle
+      ? 'Vehiculo'
+      : hasPerson
+        ? 'Persona'
+        : 'No identificado';
+  const identifiedValue = hasVehicle
+    ? firstText(plate, vehicleClass, 'Vehiculo detectado')
+    : hasPerson
+      ? firstText(personName, employeeNo, 'Persona identificada')
+      : '';
+  const detail = firstText(
+    event.detail,
+    event.message,
+    event.eventDescription,
+    raw.eventDescription,
+    access.currentVerifyMode,
+    event.eventState,
+    raw.eventState,
+    'Registro local'
+  );
+  return {
+    id: crypto.createHash('sha1').update(JSON.stringify([
+      event.receivedAt,
+      timestamp,
+      type,
+      camera,
+      device,
+      identifiedValue,
+      event.serialNo
+    ])).digest('hex').slice(0, 16),
+    timestamp,
+    receivedAt: event.receivedAt || '',
+    type,
+    objectType,
+    identifiedValue,
+    camera,
+    device,
+    detail,
+    hasVehicle,
+    hasPerson,
+    rawText: JSON.stringify(event)
+  };
+}
+
+function summarizeLocalEvents(events = []) {
+  const vehicleIdentified = events.filter((event) => event.hasVehicle).length;
+  const personIdentified = events.filter((event) => event.hasPerson).length;
+  return {
+    total: events.length,
+    identified: events.filter((event) => event.hasVehicle || event.hasPerson).length,
+    vehicleIdentified,
+    personIdentified
+  };
+}
+
+async function recordOperatorMovementEvent(req, { payload = {}, movement = {}, accessId = '', controlPointId = '', source = '' } = {}) {
+  try {
+    const operator = req.operatorSession?.operator || {};
+    const companions = normalizeOperatorCompanionPayload(payload.companions || payload.companions_json);
+    const companionName = firstText(...companions.map((companion) => companion.name));
+    const personName = normalizeOperatorPersonName(firstText(
+      payload.visitor_name,
+      payload.nombre_visitante,
+      payload.nombre_responsable,
+      movement.visitor_name,
+      movement.driver,
+      companionName
+    ));
+    const plate = normalizeOperatorPlate(firstText(
+      payload.placa,
+      payload.placas,
+      movement.placa
+    ));
+    const accessName = firstText(
+      payload.access_name,
+      payload.acceso_name,
+      movement.accessName,
+      movement.access_name,
+      accessId
+    );
+    const controlPointName = firstText(
+      payload.control_point_name,
+      payload.punto_control_name,
+      movement.controlPointName,
+      movement.control_point_name,
+      controlPointId
+    );
+    const movementId = firstText(
+      movement.id,
+      movement.uid_bubble,
+      movement.folio_display,
+      payload.id2_text,
+      payload.id2
+    );
+    await addEvent({
+      type: 'Movimiento creado',
+      eventType: 'operator_movement_created',
+      eventState: 'active',
+      dateTime: new Date().toISOString(),
+      plate,
+      placa: plate,
+      person_name: personName,
+      camera: controlPointName,
+      device: accessName,
+      detail: `Movimiento generado por ${firstText(operator.name, payload.operator_name, 'Operador EOLO')}`,
+      movement_id: movementId,
+      movement_type: firstText(payload.movement_type, movement.movement_type),
+      movement_kind: firstText(payload.kind, movement.kind),
+      source,
+      operator_name: firstText(operator.name, payload.operator_name),
+      operator_phone: firstText(operator.phone),
+      operator_user_id: firstText(operator.userId, operator.user_id, operator.id),
+      access_id: accessId || firstText(payload.access_id, payload.id_acceso, movement.accessId),
+      access_name: accessName,
+      control_point_id: controlPointId || firstText(payload.control_point_id, payload.id_punto_control, movement.controlPointId),
+      control_point_name: controlPointName,
+      raw: {
+        movement,
+        payload: {
+          access_id: firstText(payload.access_id, payload.id_acceso),
+          access_name: accessName,
+          control_point_id: firstText(payload.control_point_id, payload.id_punto_control),
+          control_point_name: controlPointName,
+          placa: plate,
+          visitor_name: personName,
+          movement_type: firstText(payload.movement_type),
+          kind: firstText(payload.kind)
+        }
+      }
+    });
+  } catch (error) {
+    await log('warn', 'No se pudo registrar evento local de movimiento de operador', {
+      error: error.message,
+      accessId,
+      controlPointId
+    });
+  }
+}
+
+function bubbleDateToIso(value) {
+  const date = parseOperatorDateValue(value);
+  return date ? date.toISOString() : '';
 }
 
 async function fetchOperatorDataItem(session, type, id) {
@@ -2733,8 +5427,10 @@ function parseOperatorVehicleDescription(value) {
 async function createOperatorCloudMovement(session, payload, accessId, controlPointId) {
   const method = String(config.operator.createMovementMethod || 'POST').toUpperCase();
   const baseUrl = operatorWorkflowUrl(config.operator.createMovementEndpoint);
-  const bodyPayload = buildOperatorMovementPayload(payload, accessId, controlPointId);
-  const companions = normalizeOperatorCompanionPayload(payload.companions || bodyPayload.companions_json);
+  const payloadWithLocalId2 = await ensureOperatorMovementLocalId2(payload, accessId);
+  const bodyPayload = buildOperatorMovementPayload(payloadWithLocalId2, accessId, controlPointId);
+  await ensureOperatorMovementResidentId(session, bodyPayload, accessId);
+  const companions = normalizeOperatorCompanionPayload(payloadWithLocalId2.companions || bodyPayload.companions_json);
   const idPhotoDataUrl = bodyPayload.id_photo_data_url;
   let idPhotoUrl = firstFileUrl(bodyPayload.id_photo_url);
   const vehiclePhotoDataUrl = bodyPayload.vehicle_photo_data_url;
@@ -2778,6 +5474,36 @@ async function createOperatorCloudMovement(session, payload, accessId, controlPo
   const workflowHandlesVehicleDriver =
     bodyPayload.kind === 'Vehiculo' &&
     Boolean(bodyPayload.vehicle_id || bodyPayload.driver_id || bodyPayload.id_photo_url);
+  const existingMovement = await fetchOperatorCloudMovementById2(
+    session,
+    accessId,
+    bodyPayload.id2_text
+  );
+  if (existingMovement?.id) {
+    const movementWithExistingPhoto = idPhotoUrl && !existingMovement.id_image
+      ? { ...existingMovement, id_image: idPhotoUrl }
+      : existingMovement;
+    const enrichedExisting = await enrichOperatorCloudMovement(
+      session,
+      movementWithExistingPhoto,
+      bodyPayload,
+      accessId,
+      {
+        idPhotoUrl,
+        companions,
+        skipVehicleDriverSync: workflowHandlesVehicleDriver
+      }
+    ).catch(async (error) => {
+      await log('warn', 'Movimiento EOLO existente por folio no pudo enriquecerse completamente', {
+        movementId: existingMovement.id,
+        id2: bodyPayload.id2_text,
+        error: error.message,
+        status: error.status
+      });
+      return movementWithExistingPhoto;
+    });
+    return applyOperatorId2ToMovement(enrichedExisting || movementWithExistingPhoto, bodyPayload);
+  }
   const url = method === 'GET' ? withQuery(baseUrl, bodyPayload) : baseUrl;
   const response = await fetch(url, {
     method,
@@ -2795,7 +5521,17 @@ async function createOperatorCloudMovement(session, payload, accessId, controlPo
     error.body = body;
     throw error;
   }
-  const createdMovement = applyOperatorId2ToMovement(normalizeOperatorMovement(body, accessId), bodyPayload);
+  let createdMovement = applyOperatorId2ToMovement(normalizeOperatorMovement(body, accessId), bodyPayload);
+  if (!createdMovement?.id && bodyPayload.id2_text) {
+    const recoveredMovement = await fetchOperatorCloudMovementById2(session, accessId, bodyPayload.id2_text);
+    createdMovement = applyOperatorId2ToMovement(recoveredMovement, bodyPayload) || createdMovement;
+  }
+  if (!createdMovement?.id) {
+    const error = new Error('EOLO no devolvio un AccesoMovimiento creado ni se pudo recuperar por folio local.');
+    error.status = 502;
+    error.body = body;
+    throw error;
+  }
   const movementWithVehiclePhoto = vehicleFileUrl && createdMovement
     ? { ...createdMovement, entry_image: createdMovement.entry_image || vehicleFileUrl }
     : createdMovement;
@@ -2805,12 +5541,6 @@ async function createOperatorCloudMovement(session, payload, accessId, controlPo
       skipVehicleDriverSync: workflowHandlesVehicleDriver
     });
     return applyOperatorId2ToMovement(enrichedMovement || movementWithVehiclePhoto, bodyPayload);
-  }
-  if (!movementWithVehiclePhoto?.id) {
-    const error = new Error('EOLO creo el movimiento, pero no devolvio un ID para adjuntar la identificacion.');
-    error.status = 502;
-    error.body = body;
-    throw error;
   }
   const fileUrl = idPhotoUrl;
   const attachedMovement = await attachOperatorIdentificationPhoto(
@@ -2828,6 +5558,61 @@ async function createOperatorCloudMovement(session, payload, accessId, controlPo
     skipVehicleDriverSync: workflowHandlesVehicleDriver
   });
   return applyOperatorId2ToMovement(enrichedMovement || movementWithIdPhoto, bodyPayload);
+}
+
+async function ensureOperatorMovementResidentId(session, payload = {}, accessId = '') {
+  if (payload.resident_id || !session?.token || !accessId) return payload;
+  const userId = firstThingId(payload.permission_user_id, payload.usuario_id);
+  if (!userId) return payload;
+  const residentId = await findOperatorAccessResidentIdByUser(session, accessId, userId).catch(async (error) => {
+    await log('warn', 'No se pudo resolver AccesoResidente para payload de movimiento EOLO', {
+      accessId,
+      userId,
+      id2: payload.id2_text,
+      source: payload.source,
+      error: error.message,
+      status: error.status
+    });
+    return '';
+  });
+  if (residentId) {
+    payload.resident_id = residentId;
+    payload.residente_id = residentId;
+  }
+  return payload;
+}
+
+async function fetchOperatorCloudMovementById2(session, accessId, id2) {
+  const normalizedId2 = normalizeOperatorMovementId2(id2);
+  if (!session?.token || !accessId || !normalizedId2) return null;
+  const constraints = [
+    { key: 'acceso_custom_accesos', constraint_type: 'equals', value: accessId },
+    { key: 'id2_text', constraint_type: 'equals', value: normalizedId2 }
+  ];
+  const rawMovements = await fetchOperatorDataList(session, 'accesomovimiento', constraints, {
+    limit: 1,
+    maxPages: 1,
+    sortField: 'Created Date',
+    descending: true,
+    timeoutMs: 12000
+  }).catch(async (error) => {
+    await log('warn', 'EOLO creo movimiento pero no se pudo recuperar por folio', {
+      accessId,
+      id2: normalizedId2,
+      error: error.message,
+      status: error.status
+    });
+    return [];
+  });
+  const movement = normalizeOperatorMovements(rawMovements, accessId)[0] || null;
+  if (movement?.id) {
+    await log('info', 'Movimiento EOLO recuperado por folio local', {
+      accessId,
+      id2: normalizedId2,
+      movementId: movement.id
+    });
+  }
+  return movement;
 }
 
 function applyOperatorId2ToMovement(movement, payload = {}) {
@@ -2964,6 +5749,40 @@ async function enrichOperatorCloudMovement(
       return [];
     });
   if (companionIds.length) patches.lista_acompa_antes_list_custom_accesomovimiento = companionIds;
+  const automaticPatch = isAutomaticFacialMovementPayload(payload)
+    ? automaticFacialMovementPatchPayload(payload)
+    : {};
+
+  if (automaticPatch.Estatus) {
+    await tryOperatorDataPayloads(
+      (candidate) => patchOperatorDataItem(session, 'accesomovimiento', movement.id, candidate),
+      [
+        { Estatus: automaticPatch.Estatus }
+      ]
+    ).catch(async (error) => {
+      await log('warn', 'No se pudo marcar movimiento facial como Ingresado en EOLO', {
+        error: error.message,
+        status: error.status,
+        movementId: movement.id,
+        attemptedValues: [automaticPatch.Estatus]
+      });
+    });
+  }
+
+  if (automaticPatch.Referencia) {
+    await tryOperatorDataPayloads(
+      (candidate) => patchOperatorDataItem(session, 'accesomovimiento', movement.id, candidate),
+      [
+        { Referencia: automaticPatch.Referencia }
+      ]
+    ).catch(async (error) => {
+      await log('warn', 'No se pudo guardar nota de movimiento facial en EOLO', {
+        error: error.message,
+        status: error.status,
+        movementId: movement.id
+      });
+    });
+  }
 
   if (Object.keys(patches).length) {
     const movementPatchCandidates = [
@@ -2988,12 +5807,26 @@ async function enrichOperatorCloudMovement(
       });
     });
   }
+  const forcedIncoming = isAutomaticFacialMovementPayload(payload);
   return {
     ...movement,
     vehicle_id: vehicle?.id || movement.vehicle_id || '',
     driver_id: driver?.id || movement.driver_id || '',
     driver: driver?.name || movement.driver || '',
-    companions: companionIds.length ? companionIds : movement.companions || []
+    companions: companionIds.length ? companionIds : movement.companions || [],
+    ...(forcedIncoming ? { status: 'Ingresado', can_exit: true } : {})
+  };
+}
+
+function isAutomaticFacialMovementPayload(payload = {}) {
+  return payload.source === 'facial-stream' || payload.approved_by_device === true || payload.aprobado_por_dispositivo === true;
+}
+
+function automaticFacialMovementPatchPayload(payload = {}) {
+  const note = firstText(payload.notes, payload.nota);
+  return {
+    Estatus: 'Ingresado',
+    ...(note ? { Referencia: note } : {})
   };
 }
 
@@ -3170,7 +6003,7 @@ async function createOperatorCloudCompanions(session, movement, payload, accessI
       nombre_responsable_text: name,
       telefono_responsable_text: firstText(companion.phone, payload.telefono),
       id_frontal_file: photoUrl,
-      estatus_option_estatus_acceso_os: payload.status === 'Pendiente' ? 'pendiente' : 'adentro',
+      Estatus: payload.status === 'Pendiente' ? 'Pendiente' : 'Ingresado',
       tipo_transporte_option_tipo_transporte: 'persona',
       razon_acceso_option_razon_acceso_os: operatorMovementTypeOption(payload.movement_type),
       horaentrada_date: new Date().toISOString()
@@ -3774,7 +6607,7 @@ async function upsertOperatorCloudDeviceHeartbeat(session, { accessId = '' } = {
 }
 
 async function operatorBridgeDeviceId() {
-  const configured = firstText(config.operator.deviceId, config.hikvision.localDeviceId);
+  const configured = firstText(config.operator.deviceId);
   if (configured) return normalizeBridgeDeviceId(configured);
   const filePath = path.join(config.dataDir, 'bridge-device-id');
   try {
@@ -3883,6 +6716,19 @@ function normalizeOperatorMovementId2(value) {
     .slice(0, 32);
 }
 
+function normalizeOperatorPermissionId2(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Za-z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 64);
+}
+
+function isCurrentOperatorPermissionId2(value) {
+  return /(?:VV|VR|PR|PV)\d{14}$/.test(normalizeOperatorPermissionId2(value));
+}
+
 function fallbackOperatorId2Prefix(accessId = '') {
   const source = firstText(accessId, 'access');
   const hash = crypto.createHash('sha256').update(source).digest('hex').slice(0, 4).toUpperCase();
@@ -3903,7 +6749,7 @@ function normalizeBridgeDeviceId(value) {
 }
 
 function operatorBridgeSerial() {
-  return firstText(config.hikvision.bridgeIdentifier, os.hostname(), config.hikvision.host, 'EOLO Access Bridge');
+  return firstText(config.operator.serialNumber, os.hostname(), 'EOLO Access Bridge');
 }
 
 function operatorMachineFingerprint() {
@@ -3917,12 +6763,13 @@ function operatorMachineFingerprint() {
   return crypto.createHash('sha256').update(source).digest('hex').slice(0, 16);
 }
 
-async function extractIdentificationName(imageDataUrl) {
+async function extractIdentificationName(imageDataUrl, options = {}) {
+  const apiKey = firstText(options.apiKey, config.openaiVision.apiKey);
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.openaiVision.apiKey}`
+      Authorization: `Bearer ${apiKey}`
     },
     body: JSON.stringify({
       model: config.openaiVision.model,
@@ -4129,6 +6976,13 @@ function buildOperatorMovementPayload(payload = {}, accessId, controlPointId) {
     visit_to: value('visit_to', 'a_quien_visita', 'visita_a'),
     a_quien_visita: value('a_quien_visita', 'visit_to', 'visita_a'),
     resident_id: value('resident_id', 'residente_id', 'id_residente'),
+    permiso_acceso_id: value('permiso_acceso_id', 'permisoacceso_id', 'source_permission_id'),
+    permisoacceso_id: value('permisoacceso_id', 'permiso_acceso_id', 'source_permission_id'),
+    source_permission_id: value('source_permission_id', 'permiso_acceso_id', 'permisoacceso_id'),
+    permiso_acceso_id2: normalizeOperatorPermissionId2(value('permiso_acceso_id2', 'permission_id2')),
+    permission_id2: normalizeOperatorPermissionId2(value('permission_id2', 'permiso_acceso_id2')),
+    usuario_id: value('usuario_id', 'permission_user_id'),
+    permission_user_id: value('permission_user_id', 'usuario_id'),
     vehicle_id: value('vehicle_id', 'vehiculo_id', 'id_vehiculo'),
     driver_id: value('driver_id', 'conductor_id', 'id_conductor'),
     driver_mode: value('driver_mode'),
@@ -4142,6 +6996,8 @@ function buildOperatorMovementPayload(payload = {}, accessId, controlPointId) {
     id_photo_data_url: value('id_photo_data_url', 'identification_photo_data_url'),
     identification_photo_data_url: value('identification_photo_data_url', 'id_photo_data_url'),
     id_photo_url: value('id_photo_url', 'identification_photo_url'),
+    face_image_url: value('face_image_url', 'imagen_rostro_url'),
+    imagen_rostro_url: value('imagen_rostro_url', 'face_image_url'),
     vehicle_photo_data_url: value('vehicle_photo_data_url', 'entry_photo_data_url'),
     entry_photo_data_url: value('entry_photo_data_url', 'vehicle_photo_data_url'),
     vehicle_photo_url: value('vehicle_photo_url', 'entry_image_url'),
@@ -4150,7 +7006,19 @@ function buildOperatorMovementPayload(payload = {}, accessId, controlPointId) {
     imagen: value('imagen', 'image', 'vehicle_photo_url', 'entry_image_url'),
     inspection_notes: value('inspection_notes', 'inspeccion'),
     inspeccion: value('inspeccion', 'inspection_notes'),
-    companions_json: value('companions', 'companions_json')
+    companions_json: value('companions', 'companions_json'),
+    face_employee_no: value('face_employee_no'),
+    face_device_id: value('face_device_id'),
+    face_device_type: value('face_device_type'),
+    face_device_name: value('face_device_name'),
+    face_event_serial: value('face_event_serial'),
+    face_event_type: value('face_event_type'),
+    face_verify_mode: value('face_verify_mode'),
+    card_number: value('card_number', 'numero_tarjeta'),
+    numero_tarjeta: value('numero_tarjeta', 'card_number'),
+    qr_code: value('qr_code', 'codigo_qr'),
+    codigo_qr: value('codigo_qr', 'qr_code'),
+    source: value('source')
   };
 }
 
@@ -4325,6 +7193,14 @@ function normalizeOperatorAccesses(body) {
   if (!Array.isArray(list)) return [];
   return list.map((item) => {
     const id = item.id || item._id || item.unique_id || item.acceso || item.Acceso || '';
+    const accessOpenaiApiKey = firstText(
+      item.auxkey1_text,
+      item.AuxKey1,
+      item.auxKey1,
+      item.aux_key_1_text,
+      item['AuxKey1'],
+      item['Aux Key 1']
+    );
     const name =
       item.name ||
       item.nombre ||
@@ -4345,7 +7221,7 @@ function normalizeOperatorAccesses(body) {
       item.foto,
       item.Foto
     );
-    return {
+    const normalized = {
       id,
       name,
       description:
@@ -4381,10 +7257,28 @@ function normalizeOperatorAccesses(body) {
       id2_text: normalizeOperatorId2Prefix(firstText(item.id2_text, item.id2, item.ID2, item['ID 2'])),
       team: typeof team === 'object' ? team._id || team.id || '' : team,
       logo,
+      openaiVisionKeySet: Boolean(accessOpenaiApiKey),
+      openaiVisionKeySource: accessOpenaiApiKey ? 'access' : 'local-fallback',
       active: item.active ?? item.activo_boolean ?? item.Activo ?? true,
-      raw: item
+      raw: redactOperatorAccessSecrets(item)
     };
+    Object.defineProperty(normalized, 'accessOpenaiApiKey', {
+      value: accessOpenaiApiKey,
+      enumerable: false
+    });
+    return normalized;
   });
+}
+
+function redactOperatorAccessSecrets(item = {}) {
+  if (!item || typeof item !== 'object') return item;
+  const redacted = { ...item };
+  for (const key of Object.keys(redacted)) {
+    if (/aux_?key_?1|auxkey1/i.test(key)) {
+      redacted[key] = redacted[key] ? '[redacted]' : redacted[key];
+    }
+  }
+  return redacted;
 }
 
 function normalizeOperatorMovements(body, fallbackAccessId = '') {
@@ -4513,7 +7407,7 @@ function normalizeOperatorMovements(body, fallbackAccessId = '') {
         )
       ),
       movement_type:
-        firstText(
+        normalizeOperatorMovementType(firstText(
           getField(
             item,
             'movement_type',
@@ -4526,7 +7420,7 @@ function normalizeOperatorMovements(body, fallbackAccessId = '') {
             'Razon_Acceso',
             'razon_acceso_option_razon_acceso_os'
           )
-        ) || 'Visita',
+        )) || 'Visitante',
       kind,
       placa: firstText(getField(item, 'placa', 'Placa', 'Placas', 'placas_text', 'placa_text')),
       notes: firstText(
@@ -4643,6 +7537,7 @@ function normalizeOperatorMovement(body, fallbackAccessId = '') {
     folio_display: firstText(response.id2_text, response.id2, response.folio_display) || id,
     accessId: firstText(response.access_id) || fallbackAccessId,
     controlPointId: firstText(response.control_point_id),
+    movement_type: normalizeOperatorMovementType(firstText(response.movement_type, response.razon_acceso)) || '',
     status: normalizeMovementStatus(response.status || 'Pendiente'),
     can_exit: normalizeMovementStatus(response.status || 'Pendiente') === 'Ingresado',
     can_edit: normalizeMovementStatus(response.status || 'Pendiente') !== 'Egresado',
@@ -4681,6 +7576,16 @@ function firstBoolean(...values) {
   return false;
 }
 
+function firstBooleanOrDefault(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  const text = String(value).trim();
+  if (/^(true|yes|si|sí|1)$/i.test(text)) return true;
+  if (/^(false|no|0)$/i.test(text)) return false;
+  return fallback;
+}
+
 function firstFileUrl(...values) {
   for (const value of values) {
     if (value === undefined || value === null) continue;
@@ -4708,6 +7613,14 @@ function operatorMovementTypeOption(value) {
   if (/resident/i.test(text)) return 'residente';
   if (/serv/i.test(text)) return 'servicio';
   return 'visita';
+}
+
+function normalizeOperatorMovementType(value) {
+  const text = firstText(value);
+  if (/resident/i.test(text)) return 'Residente';
+  if (/visit/i.test(text) || /visita/i.test(text)) return 'Visitante';
+  if (/serv/i.test(text)) return 'Servicio';
+  return text;
 }
 
 function normalizeOperatorPersonName(value) {
@@ -4856,6 +7769,10 @@ function firstText(...values) {
   return '';
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function operatorFromBubbleUser(user, fallback = {}) {
   const avatar = firstFileUrl(
     user.foto_perfil,
@@ -4921,7 +7838,11 @@ async function stopDeviceEventService() {
 }
 
 async function validateCurrentDevice() {
-  return validateDeviceConfig(config.hikvision, config.mockDevice);
+  return validateDeviceConfig({
+    faceDevice: config.faceDevice,
+    hikvision: config.hikvision,
+    dahua: config.dahua
+  }, config.mockDevice);
 }
 
 async function validateDeviceConfig(settings, mockDevice) {
@@ -4934,27 +7855,76 @@ async function validateDeviceConfig(settings, mockDevice) {
   }
 
   try {
-    const candidate = new HikvisionClient({
-      ...config.hikvision,
-      ...settings,
-      port: Number(settings.port || config.hikvision.port)
-    });
+    const faceDevice = settings.faceDevice === 'dahua' ? 'dahua' : 'hikvision';
+    const candidateSettings = faceDevice === 'dahua'
+      ? {
+        ...config.dahua,
+        ...(settings.dahua || {}),
+        port: Number(settings.dahua?.port || config.dahua.port)
+      }
+      : {
+        ...config.hikvision,
+        ...(settings.hikvision || settings),
+        port: Number(settings.hikvision?.port || settings.port || config.hikvision.port)
+      };
+    const candidate = faceDevice === 'dahua'
+      ? new DahuaClient(candidateSettings)
+      : new HikvisionClient(candidateSettings);
     const deviceInfo = await candidate.deviceInfo({
       signal: AbortSignal.timeout(5000)
     });
     return {
       ok: true,
-      mode: 'device',
+      mode: faceDevice,
       message: 'Respuesta valida del dispositivo.',
       deviceInfo
     };
   } catch (error) {
+    const faceDevice = settings.faceDevice === 'dahua' ? 'dahua' : 'hikvision';
+    const candidateSettings = faceDevice === 'dahua'
+      ? { ...config.dahua, ...(settings.dahua || {}) }
+      : { ...config.hikvision, ...(settings.hikvision || settings) };
+    const diagnosis = describeDeviceValidationError(error, faceDevice, candidateSettings);
     return {
       ok: false,
-      mode: 'device',
-      message: 'No se pudo validar la respuesta del dispositivo.',
+      mode: faceDevice,
+      message: diagnosis.message,
       error: error.message,
+      status: error.status,
+      target: diagnosis.target,
       detail: error.body
     };
   }
+}
+
+function describeDeviceValidationError(error, faceDevice, settings = {}) {
+  const label = faceDevice === 'dahua' ? 'Dahua ASI' : 'Hikvision';
+  const target = `${settings.protocol || 'http'}://${settings.host || 'sin-host'}:${Number(settings.port || 80)}`;
+  const message = String(error.message || '');
+  if (error.status === 401 || error.status === 403) {
+    return {
+      target,
+      message: `${label} respondio en ${target}, pero rechazo las credenciales o permisos (${error.status}).`
+    };
+  }
+  if (/aborted|timeout|timed out/i.test(message)) {
+    return {
+      target,
+      message: `No se recibio respuesta valida de ${label} en ${target}; revisa IP, puerto y red local.`
+    };
+  }
+  return {
+    target,
+    message: `No se pudo validar ${label} en ${target}.`
+  };
+}
+
+function activeFaceDeviceSettings() {
+  return config.faceDevice === 'dahua' ? config.dahua : config.hikvision;
+}
+
+function intInRange(value, fallback, min, max) {
+  const parsed = Number.parseInt(value ?? '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
 }

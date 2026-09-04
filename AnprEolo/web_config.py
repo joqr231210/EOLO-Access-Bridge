@@ -1,5 +1,5 @@
 from flask import Flask, request, render_template, redirect, url_for, Response, stream_with_context, jsonify, send_file
-import json, os, subprocess, signal, sys, threading, queue, time, requests, sqlite3, atexit
+import json, os, subprocess, signal, sys, threading, queue, time, requests, sqlite3, atexit, platform
 from requests.auth import HTTPDigestAuth
 from bubble_config import (
     BUBBLE_HEADERS,
@@ -1135,6 +1135,79 @@ def service_status_payload():
     }
 
 
+def basic_path_info(path):
+    directory = os.path.dirname(path) or "."
+    info = {
+        "path": path,
+        "directory": directory,
+        "exists": os.path.exists(path),
+        "directoryExists": os.path.isdir(directory),
+        "readable": os.access(path, os.R_OK) if os.path.exists(path) else None,
+        "writable": os.access(path, os.W_OK) if os.path.exists(path) else None,
+        "directoryWritable": os.access(directory, os.W_OK) if os.path.isdir(directory) else False,
+    }
+    try:
+        if os.path.exists(path):
+            stat = os.stat(path)
+            info.update({
+                "size": stat.st_size,
+                "modifiedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stat.st_mtime)),
+            })
+    except Exception as error:
+        info["statError"] = str(error)
+        info["statErrorType"] = error.__class__.__name__
+    return info
+
+
+def directory_access_diagnostic(directory):
+    info = {
+        "path": directory,
+        "exists": os.path.isdir(directory),
+        "readable": os.access(directory, os.R_OK) if os.path.isdir(directory) else None,
+        "writable": os.access(directory, os.W_OK) if os.path.isdir(directory) else None,
+    }
+    parent = os.path.dirname(directory) or "."
+    if not os.path.isdir(directory) and os.path.isdir(parent):
+        info["parentWritable"] = os.access(parent, os.W_OK)
+    return info
+
+
+def path_access_diagnostic(path):
+    info = basic_path_info(path)
+    directory = info["directory"]
+    tmp_path = os.path.join(directory, f".eolo-write-test-{os.getpid()}-{int(time.time() * 1000)}.tmp")
+    replace_target = os.path.join(directory, f".eolo-replace-test-{os.getpid()}-{int(time.time() * 1000)}.tmp")
+    info["atomicWriteOk"] = False
+    try:
+        os.makedirs(directory, exist_ok=True)
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump({"ok": True, "ts": time.time()}, f)
+        os.replace(tmp_path, replace_target)
+        os.remove(replace_target)
+        info["atomicWriteOk"] = True
+    except Exception as error:
+        info["atomicWriteError"] = str(error)
+        info["atomicWriteErrorType"] = error.__class__.__name__
+        info["atomicWriteErrno"] = getattr(error, "errno", None)
+        for candidate in [tmp_path, replace_target]:
+            try:
+                if os.path.exists(candidate):
+                    os.remove(candidate)
+            except Exception:
+                pass
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                f.read(512)
+            info["readFileOk"] = True
+        except Exception as error:
+            info["readFileOk"] = False
+            info["readFileError"] = str(error)
+            info["readFileErrorType"] = error.__class__.__name__
+            info["readFileErrno"] = getattr(error, "errno", None)
+    return info
+
+
 def mask_rtsp_url(value):
     if not value:
         return ""
@@ -1454,6 +1527,8 @@ def api_health():
         "port": ANPR_API_PORT,
         "dbFile": DB_FILE,
         "configFile": CONFIG_FILE,
+        "statusFile": STATUS_FILE,
+        "runtimeDir": RUNTIME_DIR,
         "services": service_status_payload()
     })
 
@@ -1483,8 +1558,36 @@ def api_anpr_status():
     except FileNotFoundError:
         payload = {"updated_at": None, "cameras": {}}
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e), "cameras": {}}), 500
+        return jsonify({
+            "ok": False,
+            "error": str(e),
+            "errorType": e.__class__.__name__,
+            "statusFile": STATUS_FILE,
+            "diagnostics": path_access_diagnostic(STATUS_FILE),
+            "cameras": {}
+        }), 500
     return jsonify({"ok": True, **payload})
+
+
+@app.route("/api/anpr/diagnostics", methods=["GET"])
+def api_anpr_diagnostics():
+    return jsonify({
+        "ok": True,
+        "service": "anpr-eolo",
+        "platform": platform.platform(),
+        "python": sys.version,
+        "pid": os.getpid(),
+        "cwd": os.getcwd(),
+        "runtimeDir": RUNTIME_DIR,
+        "files": {
+            "config": path_access_diagnostic(CONFIG_FILE),
+            "database": path_access_diagnostic(DB_FILE),
+            "detections": path_access_diagnostic(DETECTIONS_FILE),
+            "status": path_access_diagnostic(STATUS_FILE),
+            "snapshots": directory_access_diagnostic(SNAPSHOT_DIR),
+        },
+        "services": service_status_payload()
+    })
 
 
 @app.route("/api/anpr/snapshots/<camera_name>", methods=["GET"])

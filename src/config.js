@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import path from 'node:path';
+import { DEFAULT_USER_SYNC_WORKFLOW, normalizeWorkflowEndpoint } from './eoloWorkflow.js';
 
 const intFromEnv = (name, fallback) => {
   const value = Number.parseInt(process.env[name] ?? '', 10);
@@ -17,6 +18,8 @@ export const config = {
   dataDir: path.resolve(process.env.DATA_DIR || './data'),
   uploadDir: path.resolve(process.env.UPLOAD_DIR || './uploads'),
   mockDevice: boolFromEnv('MOCK_DEVICE', true),
+  faceDevice: process.env.FACE_DEVICE === 'dahua' ? 'dahua' : 'hikvision',
+  faceDevices: [],
   hikvision: {
     bridgeIdentifier: process.env.BRIDGE_IDENTIFIER || 'Nuevo Dispositivo Bridge',
     localDeviceId: process.env.LOCAL_DEVICE_ID || '',
@@ -31,6 +34,21 @@ export const config = {
     faceLibType: process.env.HIKVISION_FACE_LIB_TYPE || 'blackFD',
     dedupWindowMs: intFromEnv('HIKVISION_DEDUP_WINDOW_SECONDS', 8) * 1000
   },
+  dahua: {
+    bridgeIdentifier: process.env.DAHUA_BRIDGE_IDENTIFIER || 'Dahua ASI',
+    localDeviceId: process.env.DAHUA_LOCAL_DEVICE_ID || '',
+    protocol: process.env.DAHUA_PROTOCOL || 'http',
+    host: process.env.DAHUA_HOST || '192.168.1.65',
+    port: intFromEnv('DAHUA_PORT', 80),
+    username: process.env.DAHUA_USERNAME || 'admin',
+    password: process.env.DAHUA_PASSWORD || '',
+    doorNo: intFromEnv('DAHUA_DOOR_NO', 0),
+    cardType: intFromEnv('DAHUA_CARD_TYPE', 0),
+    validYears: intFromEnv('DAHUA_VALID_YEARS', 10),
+    dedupWindowMs: intFromEnv('DAHUA_DEDUP_WINDOW_SECONDS', 8) * 1000,
+    eventCodes: process.env.DAHUA_EVENT_CODES || 'All',
+    heartbeatSeconds: intFromEnv('DAHUA_EVENT_HEARTBEAT_SECONDS', 5)
+  },
   eolo: {
     baseUrl: process.env.EOLO_API_BASE_URL || '',
     token: process.env.EOLO_API_TOKEN || '',
@@ -40,9 +58,7 @@ export const config = {
     pollEnabled: boolFromEnv('EOLO_POLL_ENABLED', false),
     pollIntervalMs: intFromEnv('EOLO_POLL_INTERVAL_SECONDS', 30) * 1000,
     userSyncEnabled: boolFromEnv('EOLO_USER_SYNC_ENABLED', false),
-    userSyncEndpoint:
-      process.env.EOLO_USER_SYNC_ENDPOINT ||
-      'https://eolo.app/version-test/api/1.1/wf/permisos-acceso',
+    userSyncEndpoint: normalizeWorkflowEndpoint(process.env.EOLO_USER_SYNC_ENDPOINT || DEFAULT_USER_SYNC_WORKFLOW),
     access: process.env.EOLO_ACCESS || '',
     userSyncIntervalMs: intFromEnv('EOLO_USER_SYNC_INTERVAL_MINUTES', 30) * 60 * 1000
   },
@@ -69,6 +85,9 @@ export const config = {
     createMovementEndpoint:
       process.env.EOLO_OPERATOR_CREATE_MOVEMENT_ENDPOINT || 'bridge_operator_create_movement',
     createMovementMethod: process.env.EOLO_OPERATOR_CREATE_MOVEMENT_METHOD || 'POST',
+    permissionId2Endpoint:
+      process.env.EOLO_OPERATOR_PERMISSION_ID2_ENDPOINT || 'bridge_access_permission_id2',
+    permissionId2Method: process.env.EOLO_OPERATOR_PERMISSION_ID2_METHOD || 'POST',
     egressMovementEndpoint:
       process.env.EOLO_OPERATOR_EGRESS_MOVEMENT_ENDPOINT || 'bridge_operator_egress_movement',
     egressMovementMethod: process.env.EOLO_OPERATOR_EGRESS_MOVEMENT_METHOD || 'POST',
@@ -85,6 +104,7 @@ export const config = {
     deviceHeartbeatMethod: process.env.EOLO_OPERATOR_DEVICE_HEARTBEAT_METHOD || 'POST',
     deviceDataType: process.env.EOLO_OPERATOR_DEVICE_DATA_TYPE || 'dispositivosacceso',
     deviceId: process.env.EOLO_OPERATOR_DEVICE_ID || '',
+    serialNumber: process.env.EOLO_OPERATOR_SN || process.env.BRIDGE_SN || '',
     defaultName: process.env.EOLO_OPERATOR_NAME || 'Operador EOLO',
     defaultCompany: process.env.EOLO_OPERATOR_COMPANY || 'TRACSA',
     defaultAccessName: process.env.EOLO_OPERATOR_ACCESS_NAME || 'Caseta Periferico',
@@ -103,7 +123,7 @@ export const config = {
       `http://localhost:${process.env.ANPR_STREAM_HOST_PORT || 8083}`
     ).replace(/\/+$/, ''),
     webrtcEnabled: boolFromEnv('ANPR_WEBRTC_ENABLED', true),
-    webrtcAutostart: boolFromEnv('ANPR_WEBRTC_AUTOSTART', false),
+    webrtcAutostart: boolFromEnv('ANPR_WEBRTC_AUTOSTART', true),
     webrtcApiUrl: (process.env.ANPR_WEBRTC_API_URL || 'http://127.0.0.1:1984').replace(/\/+$/, ''),
     webrtcPublicUrl: (
       process.env.ANPR_WEBRTC_PUBLIC_URL ||

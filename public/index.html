@@ -13,16 +13,15 @@
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <img class="brand-logo" src="/assets/eolo-logo.png" alt="EOLO" />
           <div>
-            <strong>EOLO Access Bridge</strong>
-            <span id="bridgeIdentifierText">Nuevo Dispositivo Bridge</span>
+            <strong>Access Bridge</strong>
+            <span id="bridgeIdentifierText">SN pendiente</span>
           </div>
         </div>
         <nav class="nav">
           <button class="nav-item operator-return" type="button" data-open-operator>
             <span class="nav-icon" aria-hidden="true">←</span>
-            <span>Operador</span>
+            <span>Panel de Operador</span>
           </button>
           <button class="nav-item hidden" data-panel="chat" hidden>Comandos</button>
           <button class="nav-item hidden" data-panel="employees" hidden>Empleados</button>
@@ -224,12 +223,13 @@
           <div class="settings-page-layout" id="technicalSettingsLayout">
             <form class="settings-stack" id="deviceConfigForm" novalidate>
               <div class="tabs settings-tabs" role="tablist" aria-label="Configuracion">
-                <button class="tab-button active" type="button" data-settings-tab="device">Dispositivo Local</button>
-                <button class="tab-button" type="button" data-settings-tab="eolo">Sincronizacion EOLO</button>
+                <button class="tab-button active" type="button" data-settings-tab="device">Sincronizacion Dispositivo</button>
+                <button class="tab-button" type="button" data-settings-tab="eolo">Sincronizacion Cloud</button>
               </div>
               <div class="settings-layout">
                 <div class="tool-card settings-tab-panel active" id="deviceSettingsPanel">
-                  <h2>Dispositivo Local</h2>
+                  <h2>Sincronizacion Dispositivo</h2>
+              <div class="device-settings-block" data-device-settings="hikvision">
               <div class="connection-summary" id="connectionSummary">
                 <div class="summary-item" id="deviceConnectionCard">
                   <span class="summary-dot" aria-hidden="true"></span>
@@ -321,30 +321,125 @@
                 </label>
               </div>
               <div class="form-actions settings-panel-actions">
-                <button type="button" id="testConfigBtn">Probar</button>
-                <button type="button" class="primary-button" id="saveDeviceConfigBtn">Guardar</button>
+                <button type="button" data-test-device-config="hikvision">Probar Hikvision</button>
+                <button type="button" class="primary-button" data-save-device-config="hikvision">Guardar Hikvision</button>
               </div>
+              </div>
+              <div class="device-settings-block" data-device-settings="dahua" hidden>
+                <div class="connection-summary">
+                  <div class="summary-item">
+                    <span class="summary-dot" aria-hidden="true"></span>
+                    <div>
+                      <strong>Dahua ASI6213S-D</strong>
+                      <span>Conexion local por HTTP CGI con autenticacion Digest.</span>
+                    </div>
+                  </div>
+                </div>
+                <label>
+                  Identificador
+                  <input name="dahuaBridgeIdentifier" placeholder="Dahua ASI" />
+                </label>
+                <label>
+                  ID Dispositivo EOLO opcional
+                  <input name="dahuaLocalDeviceId" placeholder="Opcional" />
+                </label>
+                <div class="form-grid">
+                  <label>
+                    Protocolo
+                    <select name="dahuaProtocol">
+                      <option value="http">http</option>
+                      <option value="https">https</option>
+                    </select>
+                  </label>
+                  <label>
+                    Puerto
+                    <input name="dahuaPort" type="number" min="1" max="65535" value="80" />
+                  </label>
+                </div>
+                <label>
+                  IP o host
+                  <input name="dahuaHost" placeholder="192.168.1.65" />
+                </label>
+                <label>
+                  Usuario
+                  <input name="dahuaUsername" autocomplete="username" />
+                </label>
+                <div class="credential-panel" id="dahuaCredentialPanel">
+                  <div>
+                    <strong>Credenciales Dahua</strong>
+                    <span id="dahuaCredentialHint">La contrasena guardada se conserva si no activas el cambio.</span>
+                  </div>
+                  <label class="check-row credential-toggle">
+                    <input name="changeDahuaPassword" type="checkbox" />
+                    Cambiar contrasena guardada
+                  </label>
+                </div>
+                <label>
+                  Nueva contrasena
+                  <input
+                    name="dahuaPassword"
+                    type="password"
+                    autocomplete="current-password"
+                    placeholder="Activa cambiar contrasena para editar"
+                  />
+                </label>
+                <div class="form-grid">
+                  <label>
+                    Puerta CGI
+                    <input name="dahuaDoorNo" type="number" min="0" max="128" value="0" />
+                  </label>
+                  <label>
+                    Tipo tarjeta
+                    <input name="dahuaCardType" type="number" min="0" max="255" value="0" />
+                  </label>
+                </div>
+                <div class="form-grid">
+                  <label>
+                    Vigencia años
+                    <input name="dahuaValidYears" type="number" min="1" max="50" value="10" />
+                  </label>
+                  <label>
+                    Dedupe seg.
+                    <input name="dahuaDedupWindowSeconds" type="number" min="1" max="120" value="8" />
+                  </label>
+                </div>
+                <div class="form-grid">
+                  <label>
+                    Eventos CGI
+                    <input name="dahuaEventCodes" placeholder="All" />
+                  </label>
+                  <label>
+                    Heartbeat seg.
+                    <input name="dahuaHeartbeatSeconds" type="number" min="1" max="60" value="5" />
+                  </label>
+                </div>
+                <div class="form-actions settings-panel-actions">
+                  <button type="button" data-test-device-config="dahua">Probar Dahua</button>
+                  <button type="button" class="primary-button" data-save-device-config="dahua">Guardar Dahua</button>
+                </div>
+              </div>
+              <div id="deviceSyncPanelMount"></div>
               </div>
                 <div class="tool-card settings-tab-panel" id="eoloSettingsPanel">
-                  <h2>Sincronizacion EOLO</h2>
+                  <h2>Sincronizacion Cloud</h2>
                 <div class="connection-summary">
                   <div class="summary-item" id="eoloSyncStatusCard">
                     <span class="summary-dot" aria-hidden="true"></span>
                     <div>
-                      <strong id="eoloSyncStatusTitle">Sincronizacion EOLO</strong>
+                      <strong id="eoloSyncStatusTitle">Sincronizacion Cloud</strong>
                       <span id="eoloSyncStatusDetail">Revisando configuracion de usuarios.</span>
                     </div>
                   </div>
                 </div>
                 <label class="check-row">
                   <input name="eoloUserSyncEnabled" type="checkbox" />
-                  Sincronizar con EOLO Usuarios
+                  Habilitar descarga de usuarios EOLO
                 </label>
                 <label>
-                  Endpoint usuarios EOLO
+                  Workflow usuarios EOLO
                   <input
                     name="eoloUserSyncEndpoint"
-                    placeholder="https://eolo.app/version-test/api/1.1/wf/permisos-acceso"
+                    placeholder="permisos-acceso"
                   />
                 </label>
                 <label>
@@ -352,8 +447,8 @@
                   <input name="eoloAccess" placeholder="1754678396045x..." />
                 </label>
                 <label>
-                  ID Dispositivo EOLO
-                  <input name="localDeviceId" placeholder="1784244113632x813567226617878100" />
+                  ID Dispositivo EOLO opcional
+                  <input name="localDeviceId" placeholder="Opcional" />
                 </label>
                 <label>
                   Intervalo sincronizacion min.
@@ -379,9 +474,9 @@
                   />
                 </label>
                 <div class="form-actions settings-panel-actions">
-                  <button type="button" id="syncEoloUsersBtn">Sincronizar ahora</button>
                   <button type="button" class="primary-button" id="saveEoloConfigBtn">Guardar</button>
                 </div>
+                <div id="cloudSyncPanelMount"></div>
               </div>
             </div>
             </form>
@@ -395,7 +490,7 @@
             </div>
             <div class="tool-card full settings-log-card settings-debug-panel" id="eoloSyncDebugPanel">
               <div class="card-header">
-                <h2>Log Sincronizacion EOLO</h2>
+                <h2>Log Sincronizacion Cloud</h2>
                 <button type="button" id="clearEoloSyncDebugBtn">Limpiar</button>
               </div>
               <div class="validation-result" id="eoloSyncResult">Sin prueba reciente.</div>
