@@ -3,7 +3,6 @@ const { execFile, spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const net = require('node:net');
-const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -510,25 +509,37 @@ function launchInstallerAfterExit(installerPath) {
     }).unref();
     return;
   }
-  const launcherPath = path.join(updatesDirectory(), `install-after-exit-${Date.now()}.cmd`);
-  const escapedInstallerPath = installerPath.replace(/"/g, '""');
+  // Use wscript instead of a detached cmd.exe: newer Windows installations can
+  // host cmd in Windows Terminal, which makes the update wait loop visible.
+  const launcherPath = path.join(updatesDirectory(), `install-after-exit-${Date.now()}.vbs`);
+  const escapeVbsString = (value) => String(value).replace(/"/g, '""');
   const script = [
-    '@echo off',
-    'setlocal',
-    `set "EOLO_PID=${process.pid}"`,
-    `set "EOLO_INSTALLER=${escapedInstallerPath}"`,
-    ':wait',
-    'tasklist /FI "PID eq %EOLO_PID%" | find "%EOLO_PID%" >nul',
-    'if not errorlevel 1 (',
-    '  timeout /t 1 /nobreak >nul',
-    '  goto wait',
-    ')',
-    'start "" "%EOLO_INSTALLER%"',
-    'del "%~f0"',
-    ''
-  ].join(os.EOL);
+    'Option Explicit',
+    'Dim launcherPath, installerPath, targetPid, service, processes, shell, fileSystem',
+    `launcherPath = "${escapeVbsString(launcherPath)}"`,
+    `installerPath = "${escapeVbsString(installerPath)}"`,
+    `targetPid = ${process.pid}`,
+    'On Error Resume Next',
+    'Set service = GetObject("winmgmts:\\\\.\\root\\cimv2")',
+    'If Err.Number = 0 Then',
+    '  Do',
+    '    Set processes = service.ExecQuery("SELECT ProcessId FROM Win32_Process WHERE ProcessId = " & targetPid)',
+    '    If processes.Count = 0 Then Exit Do',
+    '    WScript.Sleep 250',
+    '  Loop',
+    'Else',
+    '  Err.Clear',
+    '  WScript.Sleep 5000',
+    'End If',
+    'On Error GoTo 0',
+    'Set shell = CreateObject("WScript.Shell")',
+    'shell.Run Chr(34) & installerPath & Chr(34), 1, False',
+    'Set fileSystem = CreateObject("Scripting.FileSystemObject")',
+    'fileSystem.DeleteFile launcherPath, True'
+  ].join('\r\n');
   fs.writeFileSync(launcherPath, script);
-  spawn(process.env.ComSpec || 'cmd.exe', ['/c', launcherPath], {
+  const wscriptPath = path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'wscript.exe');
+  spawn(wscriptPath, ['//B', '//Nologo', launcherPath], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true
