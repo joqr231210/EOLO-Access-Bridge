@@ -1,11 +1,11 @@
 {
-  "version": "0.2.11",
-  "publishedAt": "2026-09-21T19:04:02.693Z",
-  "notes": "EOLO Access Bridge 0.2.11",
+  "version": "0.2.10",
+  "publishedAt": "2026-09-04T17:32:13.000Z",
+  "notes": "EOLO Access Bridge 0.2.10",
   "windows": {
     "x64": {
-      "url": "https://github.com/joqr231210/EOLO-Access-Bridge/releases/download/v0.2.11/EOLO.Access.Bridge.Setup.0.2.11.exe",
-      "sha256": "08aff4e28a7ae83add4a1b475f9ba680412bc089c2c7d519db711893ac185cf4"
+      "url": "https://github.com/joqr231210/EOLO-Access-Bridge/releases/download/v0.2.10/EOLO.Access.Bridge.Setup.0.2.10.exe",
+      "sha256": "57ce5939659edf400083c0f86d27566cb7d659cfbab01913dbee9d8014bf12b5"
     }
   }
 }
