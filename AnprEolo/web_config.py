@@ -48,6 +48,7 @@ ANPR_CONTROL_BASE_URL = os.environ.get(
     "ANPR_CONTROL_BASE_URL",
     f"http://127.0.0.1:{ANPR_API_PORT}"
 ).rstrip("/")
+ANPR_AUTOMATION_CALLBACK_URL = os.environ.get("ANPR_AUTOMATION_CALLBACK_URL", "").rstrip("/")
 app_process = None   # proceso global
 rtsp_process = None  # proceso global
 worker_thread = None
@@ -353,13 +354,70 @@ def load_config():
                 data["version"] = "test"
             if "bubble_token" not in data:
                 data["bubble_token"] = ""
+            if "auto_vehicle_events" not in data:
+                data["auto_vehicle_events"] = False
+            if "auto_vehicle_movements" not in data:
+                data["auto_vehicle_movements"] = False
             return data
     except FileNotFoundError:
-        return {"server_url": "", "cameras": [], "barriers": [dict(DEMO_BARRIER)], "id_acceso": "", "id_estacionamiento": "", "version": "test", "bubble_token": ""}
+        return {
+            "server_url": "",
+            "cameras": [],
+            "barriers": [dict(DEMO_BARRIER)],
+            "id_acceso": "",
+            "id_estacionamiento": "",
+            "version": "test",
+            "bubble_token": "",
+            "auto_vehicle_events": False,
+            "auto_vehicle_movements": False,
+        }
 
 def save_config(config):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
+
+def utc_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+def normalize_vehicle_plate(value):
+    return ''.join(ch for ch in str(value or '').strip().upper() if ch.isalnum())
+
+def normalize_permission_vehicle_payload(payload):
+    raw_items = payload.get("vehicles")
+    if raw_items is None:
+        raw_items = payload.get("permissions", [])
+    vehicles_by_plate = {}
+    for raw in raw_items or []:
+        if not isinstance(raw, dict):
+            continue
+        plate = normalize_vehicle_plate(
+            raw.get("plate") or
+            raw.get("placa") or
+            raw.get("Placa") or
+            raw.get("placavehiculo_text")
+        )
+        if not plate:
+            continue
+        name = str(
+            raw.get("name") or
+            raw.get("nombre") or
+            raw.get("principal_name") or
+            raw.get("user_name") or
+            "Permiso vehicular"
+        ).strip()
+        phone = str(
+            raw.get("phone") or
+            raw.get("telefono") or
+            raw.get("Telefono") or
+            raw.get("telefono_text") or
+            ""
+        ).strip()
+        vehicles_by_plate[plate] = {
+            "placa": plate,
+            "nombre": name,
+            "telefono": phone,
+        }
+    return list(vehicles_by_plate.values())
 
 def restart_main_app():
     global app_process
@@ -379,6 +437,7 @@ def restart_main_app():
     env["ANPR_DB_FILE"] = DB_FILE
     env["ANPR_CONFIG_FILE"] = CONFIG_FILE
     env["ANPR_CONTROL_BASE_URL"] = ANPR_CONTROL_BASE_URL
+    env["ANPR_AUTOMATION_CALLBACK_URL"] = ANPR_AUTOMATION_CALLBACK_URL
     if getattr(sys, "frozen", False):
         command = [sys.executable, "--anpr-worker"]
         cwd = RUNTIME_DIR
@@ -494,9 +553,57 @@ def sync_plates():
         conn.commit()
         conn.close()
 
+        config["vehicle_sync_source"] = "legacy-placas"
+        config["vehicle_sync_access"] = id_acceso
+        config["vehicle_sync_at"] = utc_iso()
+        save_config(config)
+
         return jsonify({"message": f"Sincronización exitosa. {len(items)} registros cargados."})
     except Exception as e:
         return jsonify({"error": f"Error en sincronización: {str(e)}"}), 500
+
+@app.route("/api/vehicles/permissions-sync", methods=["POST"])
+def api_sync_vehicles_from_permissions():
+    try:
+        payload = request.get_json(silent=True) or {}
+        access_id = str(payload.get("access") or payload.get("access_id") or "").strip()
+        vehicles = normalize_permission_vehicle_payload(payload)
+
+        conn = sqlite3.connect(DB_FILE)
+        try:
+            c = conn.cursor()
+            c.execute("BEGIN")
+            c.execute("DELETE FROM vehiculos")
+            for vehicle in vehicles:
+                c.execute(
+                    "INSERT OR REPLACE INTO vehiculos (placa, nombre, telefono) VALUES (?, ?, ?)",
+                    (vehicle["placa"], vehicle["nombre"], vehicle["telefono"])
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        config = load_config()
+        if access_id:
+            config["id_acceso"] = access_id
+        config["vehicle_sync_source"] = "permisoaccesos"
+        config["vehicle_sync_access"] = access_id
+        config["vehicle_sync_at"] = utc_iso()
+        save_config(config)
+
+        return jsonify({
+            "ok": True,
+            "source": "permisoaccesos",
+            "access": access_id,
+            "vehicles": len(vehicles),
+            "plates": [vehicle["placa"] for vehicle in vehicles],
+            "dbFile": DB_FILE
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/acceso_mov_preautorizados", methods=["GET"])
 def get_acceso_mov_preautorizados():
@@ -814,9 +921,11 @@ def background_worker(stop_event=None):
     print("[WORKER] Iniciando hilo de sincronización...")
     while not stop_event.is_set():
         try:
-            # 1. Sincronizar placas (reutilizando la lógica interna de sync_plates)
-            with app.test_request_context():
-                sync_plates()
+            # 1. Sincronizar placas legacy solo si la fuente moderna de PermisoAccesos no tomó control.
+            config = load_config()
+            if config.get("vehicle_sync_source") != "permisoaccesos":
+                with app.test_request_context():
+                    sync_plates()
 
             # 2. Sincronizar movimientos
             sync_movements_to_bubble()
@@ -1258,6 +1367,8 @@ def safe_config_payload(config):
         "strict_plate_validation": bool(config.get("strict_plate_validation", True)),
         "require_vehicle_detection": bool(config.get("require_vehicle_detection", False)),
         "min_vehicle_confidence": config.get("min_vehicle_confidence", 0.78),
+        "auto_vehicle_events": bool(config.get("auto_vehicle_events", False)),
+        "auto_vehicle_movements": bool(config.get("auto_vehicle_movements", False)),
         "cameras": cameras,
         "barriers": public_barriers,
     }
@@ -1370,6 +1481,8 @@ def public_config_payload(config):
         "strict_plate_validation": bool(config.get("strict_plate_validation", True)),
         "require_vehicle_detection": bool(config.get("require_vehicle_detection", False)),
         "min_vehicle_confidence": config.get("min_vehicle_confidence", 0.78),
+        "auto_vehicle_events": bool(config.get("auto_vehicle_events", False)),
+        "auto_vehicle_movements": bool(config.get("auto_vehicle_movements", False)),
     }
 
 
@@ -1403,6 +1516,10 @@ def apply_config_payload(config, payload):
         config["require_vehicle_detection"] = bool(payload.get("require_vehicle_detection"))
     if "strict_plate_validation" in payload:
         config["strict_plate_validation"] = bool(payload.get("strict_plate_validation"))
+    if "auto_vehicle_events" in payload:
+        config["auto_vehicle_events"] = bool(payload.get("auto_vehicle_events"))
+    if "auto_vehicle_movements" in payload:
+        config["auto_vehicle_movements"] = bool(payload.get("auto_vehicle_movements"))
 
     return config
 

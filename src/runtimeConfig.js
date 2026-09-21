@@ -68,8 +68,11 @@ export function publicRuntimeConfig() {
       enabled: config.openaiVision.enabled,
       apiKeySet: Boolean(config.openaiVision.apiKey),
       model: config.openaiVision.model,
-      timeoutSeconds: Math.round(config.openaiVision.timeoutMs / 1000)
+      timeoutSeconds: Math.round(config.openaiVision.timeoutMs / 1000),
+      cameraZoomPercent: intInRange(config.openaiVision.cameraZoomPercent, 100, 100, 220)
     },
+    automations: publicAutomationsConfig(),
+    lanes: publicLanes(),
     operator: {
       appBaseUrl: config.operator.appBaseUrl,
       appVersion: config.operator.appVersion,
@@ -94,6 +97,7 @@ export function applyRuntimeConfig(input, { preservePassword }) {
   const dahua = input.dahua || {};
   const eolo = input.eolo || {};
   const openaiVision = input.openaiVision || {};
+  const automations = input.automations || {};
   const operator = input.operator || {};
   const protocol = String(hikvision.protocol || current.protocol || 'http').toLowerCase();
   const host = String(hikvision.host || current.host || '').trim();
@@ -264,7 +268,37 @@ export function applyRuntimeConfig(input, { preservePassword }) {
         Math.round(currentVision.timeoutMs / 1000) || 18,
         5,
         60
-      ) * 1000
+      ) * 1000,
+    cameraZoomPercent: intInRange(
+      openaiVision.cameraZoomPercent,
+      currentVision.cameraZoomPercent || 100,
+      100,
+      220
+    )
+  };
+  config.automations = {
+    ...config.automations,
+    vehicles: {
+      ...config.automations.vehicles,
+      eventsEnabled:
+        typeof automations.vehicles?.eventsEnabled === 'boolean'
+          ? automations.vehicles.eventsEnabled
+          : typeof automations.vehicles?.autoVehicleEvents === 'boolean'
+            ? automations.vehicles.autoVehicleEvents
+            : Boolean(config.automations.vehicles?.eventsEnabled),
+      movementsEnabled:
+        typeof automations.vehicles?.movementsEnabled === 'boolean'
+          ? automations.vehicles.movementsEnabled
+          : typeof automations.vehicles?.autoVehicleMovements === 'boolean'
+            ? automations.vehicles.autoVehicleMovements
+            : Boolean(config.automations.vehicles?.movementsEnabled)
+    },
+    pedestrians: {
+      ...(config.automations.pedestrians || {}),
+      ...(automations.pedestrians && typeof automations.pedestrians === 'object'
+        ? automations.pedestrians
+        : {})
+    }
   };
   config.operator = {
     ...currentOperator,
@@ -294,6 +328,7 @@ export function applyRuntimeConfig(input, { preservePassword }) {
     currentDevices: config.faceDevices,
     fallbackDevices: buildDefaultFaceDevices()
   });
+  config.lanes = normalizeLanes(input.lanes, config.lanes);
 
   return {
     mockDevice: config.mockDevice,
@@ -303,8 +338,26 @@ export function applyRuntimeConfig(input, { preservePassword }) {
     dahua: config.dahua,
     eolo: config.eolo,
     openaiVision: config.openaiVision,
+    automations: config.automations,
+    lanes: config.lanes,
     operator: config.operator
   };
+}
+
+function publicAutomationsConfig() {
+  return {
+    vehicles: {
+      eventsEnabled: Boolean(config.automations.vehicles?.eventsEnabled),
+      movementsEnabled: Boolean(config.automations.vehicles?.movementsEnabled)
+    },
+    pedestrians: {
+      ...(config.automations.pedestrians || {})
+    }
+  };
+}
+
+function publicLanes() {
+  return normalizeLanes(config.lanes, config.lanes);
 }
 
 function publicFaceDevices() {
@@ -319,6 +372,92 @@ function publicFaceDevices() {
       passwordSet: Boolean(password)
     };
   });
+}
+
+function normalizeLanes(inputLanes, currentLanes = []) {
+  const source = Array.isArray(inputLanes) ? inputLanes : Array.isArray(currentLanes) ? currentLanes : [];
+  const normalized = [];
+  for (const raw of source) {
+    const lane = normalizeLane(raw, normalized.length);
+    if (!lane.id || normalized.some((item) => item.id === lane.id)) continue;
+    normalized.push(lane);
+  }
+  return normalized;
+}
+
+function normalizeLane(raw = {}, index = 0) {
+  const id = normalizeLaneId(raw.id || raw._id || `lane-${index + 1}`);
+  const kind = normalizeLaneKind(raw.kind || raw.type || raw.tipo);
+  const direction = normalizeLaneDirection(raw.direction || raw.sentido || raw.flow);
+  const now = new Date().toISOString();
+  return {
+    id,
+    code: String(raw.code || raw.codigo || '').trim().slice(0, 40),
+    name:
+      String(raw.name || raw.nombre || `Carril ${index + 1}`).trim().slice(0, 120) ||
+      `Carril ${index + 1}`,
+    kind,
+    direction,
+    enabled: raw.enabled === undefined ? true : Boolean(raw.enabled),
+    automatic: raw.automatic === undefined ? true : Boolean(raw.automatic),
+    rule: String(raw.rule || raw.regla || '').trim().slice(0, 160),
+    accessId: String(raw.accessId || raw.access_id || '').trim().slice(0, 140),
+    accessName: String(raw.accessName || raw.access_name || '').trim().slice(0, 140),
+    controlPointId: String(raw.controlPointId || raw.control_point_id || '').trim().slice(0, 140),
+    controlPointName: String(raw.controlPointName || raw.control_point_name || '').trim().slice(0, 140),
+    barrierTimeSeconds: intInRange(raw.barrierTimeSeconds || raw.barrier_time_seconds, 6, 1, 120),
+    flowToday: intInRange(raw.flowToday || raw.flow_today, 0, 0, 1000000),
+    availabilityPercent: decimalInRange(raw.availabilityPercent || raw.availability_percent, 99.8, 0, 100),
+    devices: normalizeLaneDevices(raw.devices),
+    notes: String(raw.notes || raw.notas || '').trim().slice(0, 1000),
+    createdAt: String(raw.createdAt || raw.created_at || now),
+    updatedAt: String(raw.updatedAt || raw.updated_at || now)
+  };
+}
+
+function normalizeLaneDevices(devices = {}) {
+  return {
+    cameras: normalizeLaneDeviceList(devices.cameras),
+    barriers: normalizeLaneDeviceList(devices.barriers),
+    biometricReaders: normalizeLaneDeviceList(devices.biometricReaders || devices.biometric_readers),
+    presenceSensors: normalizeLaneDeviceList(devices.presenceSensors || devices.presence_sensors),
+    displays: normalizeLaneDeviceList(devices.displays),
+    relays: normalizeLaneDeviceList(devices.relays),
+    turnstiles: normalizeLaneDeviceList(devices.turnstiles),
+    doors: normalizeLaneDeviceList(devices.doors)
+  };
+}
+
+function normalizeLaneDeviceList(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  return [...new Set(source.map((item) => String(item || '').trim()).filter(Boolean))]
+    .map((item) => item.slice(0, 160));
+}
+
+function normalizeLaneKind(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (['peatonal', 'pedestrian', 'peatones'].includes(raw)) return 'peatonal';
+  if (['mixto', 'mixed', 'ambos'].includes(raw)) return 'mixto';
+  return 'vehicular';
+}
+
+function normalizeLaneDirection(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (['salida', 'egreso', 'exit'].includes(raw)) return 'salida';
+  if (['ambos', 'bidireccional', 'both'].includes(raw)) return 'ambos';
+  return 'entrada';
+}
+
+function normalizeLaneId(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^A-Za-z0-9._:-]/g, '-')
+    .slice(0, 100);
 }
 
 function buildDefaultFaceDevices() {
@@ -476,6 +615,12 @@ function normalizeOperatorSerialNumber(value) {
 
 function intInRange(value, fallback, min, max) {
   const parsed = Number.parseInt(value ?? '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function decimalInRange(value, fallback, min, max) {
+  const parsed = Number.parseFloat(value ?? '');
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
 }

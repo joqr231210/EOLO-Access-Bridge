@@ -1392,6 +1392,35 @@ input.locked-field {
   font-size: 12px;
 }
 
+.range-field {
+  display: grid;
+  gap: 8px;
+}
+
+.range-field > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--ink);
+}
+
+.range-field strong {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.range-field input[type="range"] {
+  width: 100%;
+  accent-color: var(--blue);
+}
+
+.range-field small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 #cloudEffectiveDeviceId,
 #cloudHeartbeatWorkflowUrl,
 #cloudWorkflowUrl {
@@ -1416,6 +1445,9 @@ input.locked-field {
   min-height: 180px;
   display: block;
   object-fit: cover;
+  transform: scale(var(--id-camera-zoom, 1));
+  transform-origin: center;
+  transition: transform 160ms ease;
 }
 
 .camera-preview span {
@@ -2965,6 +2997,9 @@ tbody tr:hover {
   height: 100%;
   display: block;
   object-fit: cover;
+  transform: scale(var(--id-camera-zoom, 1));
+  transform-origin: center;
+  transition: transform 160ms ease;
 }
 
 .id-camera-stage::before,

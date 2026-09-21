@@ -42,6 +42,7 @@ const operatorSessions = new Map();
 const operatorCloudSessionCache = new Map();
 const operatorInventorySummaryCache = new Map();
 const operatorAccessVisionKeyCache = new Map();
+const recentAutomaticOperatorMovements = new Map();
 const OPERATOR_ACCESS_PERMISSION_DATA_TYPE = 'permisoaccesos';
 const OPERATOR_ACCESS_PERMISSION_BUILDPRINT_TYPE = 'custom.permisoaccesos';
 const OPERATOR_ACCESS_PERMISSION_VALID_UNTIL_FIELD = 'vigenciafinal_date';
@@ -151,6 +152,31 @@ async function fetchAnprJson(pathname, options = {}) {
     throw error;
   }
   return payload;
+}
+
+function publicAutomationSettings() {
+  return {
+    vehicles: {
+      eventsEnabled: Boolean(config.automations.vehicles?.eventsEnabled),
+      movementsEnabled: Boolean(config.automations.vehicles?.movementsEnabled)
+    },
+    pedestrians: {
+      ...(config.automations.pedestrians || {})
+    }
+  };
+}
+
+async function syncAutomationsToAnpr() {
+  const automations = publicAutomationSettings();
+  return fetchAnprJson('/api/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      auto_vehicle_events: automations.vehicles.eventsEnabled,
+      auto_vehicle_movements: automations.vehicles.movementsEnabled
+    }),
+    timeoutMs: 10000
+  });
 }
 
 function escapeHtmlText(value) {
@@ -424,6 +450,96 @@ app.post(
 app.get('/api/device-config', (_req, res) => {
   res.json(publicRuntimeConfig());
 });
+
+app.get('/api/automations', (_req, res) => {
+  res.json({ ok: true, automations: publicAutomationSettings() });
+});
+
+app.get('/api/lanes', (_req, res) => {
+  res.json({ ok: true, lanes: lanesWithStatus() });
+});
+
+app.post(
+  '/api/lanes',
+  asyncRoute(async (req, res) => {
+    const now = new Date().toISOString();
+    const lane = {
+      ...normalizeLaneInput(req.body),
+      id: crypto.randomUUID(),
+      createdAt: now,
+      updatedAt: now
+    };
+    const lanes = await persistLanes([...config.lanes, lane]);
+    await log('info', 'Carril agregado', {
+      laneId: lane.id,
+      laneName: lane.name,
+      kind: lane.kind,
+      direction: lane.direction
+    });
+    res.status(201).json({ ok: true, lanes, lane: lanes.find((item) => item.id === lane.id) || lane });
+  })
+);
+
+app.put(
+  '/api/lanes/:id',
+  asyncRoute(async (req, res) => {
+    const existing = findLane(req.params.id);
+    const lane = {
+      ...normalizeLaneInput(req.body, existing),
+      id: existing.id,
+      createdAt: existing.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const lanes = await persistLanes(config.lanes.map((item) => (item.id === existing.id ? lane : item)));
+    await log('info', 'Carril actualizado', {
+      laneId: lane.id,
+      laneName: lane.name,
+      kind: lane.kind,
+      direction: lane.direction
+    });
+    res.json({ ok: true, lanes, lane: lanes.find((item) => item.id === lane.id) || lane });
+  })
+);
+
+app.delete(
+  '/api/lanes/:id',
+  asyncRoute(async (req, res) => {
+    const existing = findLane(req.params.id);
+    const lanes = await persistLanes(config.lanes.filter((item) => item.id !== existing.id));
+    await log('info', 'Carril eliminado', {
+      laneId: existing.id,
+      laneName: existing.name
+    });
+    res.json({ ok: true, lanes });
+  })
+);
+
+app.put(
+  '/api/automations',
+  asyncRoute(async (req, res) => {
+    const saved = await saveRuntimeConfig({
+      automations: req.body?.automations || req.body || {}
+    });
+    let anpr = null;
+    try {
+      anpr = await syncAutomationsToAnpr();
+    } catch (error) {
+      anpr = { ok: false, error: error.message };
+      await log('warn', 'Automatizaciones guardadas sin reflejarse en ANPR', {
+        error: error.message
+      });
+    }
+    await log('info', 'Automatizaciones guardadas', {
+      vehicles: saved.automations?.vehicles || {},
+      anprSynced: anpr?.ok !== false
+    });
+    res.json({
+      ok: true,
+      automations: saved.automations,
+      anpr
+    });
+  })
+);
 
 app.put(
   '/api/device-config',
@@ -983,6 +1099,14 @@ app.get(
   })
 );
 
+app.post(
+  '/api/anpr/automation-event',
+  asyncRoute(async (req, res) => {
+    const result = await handleAnprVehicleAutomationEvent(req.body || {});
+    res.json({ ok: true, ...result });
+  })
+);
+
 app.get(
   '/api/operator/anpr-status',
   requireOperatorSession,
@@ -1345,6 +1469,23 @@ app.get(
     const includeSummary = String(req.query.include_summary || 'true') !== 'false';
     const hasLocalFilters = Boolean(req.query.search || req.query.status || req.query.kind);
     if (config.operator.authMode === 'cloud' && accessId) {
+      const controlPointScope = await resolveOperatorControlPointScope(
+        req.operatorSession,
+        accessId,
+        controlPointId
+      ).catch(async (error) => {
+        await log('warn', 'No se pudo resolver alcance de punto de control para movimientos', {
+          error: error.message,
+          status: error.status,
+          accessId,
+          controlPointId
+        });
+        return controlPointScopeFromId(controlPointId);
+      });
+      const filterQuery = {
+        ...req.query,
+        _controlPointIds: controlPointScope.ids
+      };
       const cloudResult = await fetchOperatorCloudMovementsToday(
         req.operatorSession,
         accessId,
@@ -1367,11 +1508,36 @@ app.get(
         return null;
       });
       if (cloudResult) {
-        const cloudMovements = Array.isArray(cloudResult.movements) ? cloudResult.movements : cloudResult;
-        const filteredMovements = sortOperatorMovements(filterOperatorMovements(cloudMovements, req.query), req.query);
+        const workflowMovements = Array.isArray(cloudResult.movements) ? cloudResult.movements : cloudResult;
+        const dataApiMovements = await fetchOperatorCloudMovementsDataApi(
+          req.operatorSession,
+          accessId,
+          controlPointScope,
+          { dateFrom, dateTo }
+        ).catch(async (error) => {
+          await log('warn', 'No se pudieron complementar movimientos con Data API', {
+            error: error.message,
+            status: error.status,
+            accessId,
+            controlPointId
+          });
+          return [];
+        });
+        const recentAutomaticMovements = recentAutomaticOperatorMovementsForQuery(
+          accessId,
+          controlPointScope,
+          filterQuery
+        );
+        const hasSupplementalMovements = Boolean(dataApiMovements.length || recentAutomaticMovements.length);
+        const cloudMovements = mergeOperatorMovementLists(
+          recentAutomaticMovements,
+          dataApiMovements,
+          workflowMovements
+        );
+        const filteredMovements = sortOperatorMovements(filterOperatorMovements(cloudMovements, filterQuery), req.query);
         const cloudTotal = Number(cloudResult.total);
         const cloudWasPaginated =
-          !hasLocalFilters && Number.isFinite(cloudTotal) && cloudTotal >= filteredMovements.length;
+          !hasSupplementalMovements && !hasLocalFilters && Number.isFinite(cloudTotal) && cloudTotal >= filteredMovements.length;
         const movements = cloudWasPaginated ? filteredMovements : paginateOperatorMovements(filteredMovements, req.query);
         const summary = includeSummary
           ? await fetchOperatorCloudInventorySummary(req.operatorSession, accessId).catch(async (error) => {
@@ -1385,9 +1551,49 @@ app.get(
           : undefined;
         res.json({
           ok: true,
-          source: 'cloud',
+          source: dataApiMovements.length || recentAutomaticMovements.length ? 'cloud+data-api' : 'cloud',
           movements,
-          total: cloudWasPaginated ? cloudTotal : filteredMovements.length,
+          total: cloudWasPaginated ? Math.max(cloudTotal, filteredMovements.length) : filteredMovements.length,
+          count: movements.length,
+          limit,
+          offset,
+          sort,
+          ...(summary ? { summary } : {})
+        });
+        return;
+      }
+
+      const dataApiMovements = await fetchOperatorCloudMovementsDataApi(
+        req.operatorSession,
+        accessId,
+        controlPointScope,
+        { dateFrom, dateTo }
+      ).catch(async (error) => {
+        await log('warn', 'No se pudieron consultar movimientos directos por Data API', {
+          error: error.message,
+          status: error.status,
+          accessId,
+          controlPointId
+        });
+        return [];
+      });
+      if (dataApiMovements.length) {
+        const recentAutomaticMovements = recentAutomaticOperatorMovementsForQuery(
+          accessId,
+          controlPointScope,
+          filterQuery
+        );
+        const filteredMovements = sortOperatorMovements(
+          filterOperatorMovements(mergeOperatorMovementLists(recentAutomaticMovements, dataApiMovements), filterQuery),
+          req.query
+        );
+        const movements = paginateOperatorMovements(filteredMovements, req.query);
+        const summary = includeSummary ? summarizeOperatorMovements(filteredMovements) : undefined;
+        res.json({
+          ok: true,
+          source: 'cloud-data-api',
+          movements,
+          total: filteredMovements.length,
           count: movements.length,
           limit,
           offset,
@@ -1479,6 +1685,11 @@ app.get(
         });
         const snapshotPermissions = snapshot.permissions || [];
         const summary = summarizeOperatorAccessPermissions(snapshotPermissions);
+        const anprVehicleSync = search
+          ? null
+          : await syncOperatorVehiclePermissionsToAnpr(accessId, snapshotPermissions, {
+              validAfter: snapshot.validAfter
+            });
         res.set('Cache-Control', 'no-store');
         res.json({
           ok: true,
@@ -1488,6 +1699,7 @@ app.get(
           permissions: snapshotPermissions,
           total: snapshotPermissions.length,
           summary,
+          anprVehicleSync,
           sourceCount: snapshot.sourceCount,
           skippedExpired: snapshot.skippedExpired,
           schema: operatorAccessPermissionSchema()
@@ -1848,7 +2060,8 @@ app.put(
     await log('info', 'Configuracion OpenAI Vision guardada', {
       enabled: saved.openaiVision.enabled,
       apiKeySet: saved.openaiVision.apiKeySet,
-      model: saved.openaiVision.model
+      model: saved.openaiVision.model,
+      cameraZoomPercent: saved.openaiVision.cameraZoomPercent
     });
     res.json({ ok: true, openaiVision: saved.openaiVision });
   })
@@ -2162,6 +2375,11 @@ const server = app.listen(config.port, () => {
   }).catch(() => {});
   taskRunner.startPolling();
   eoloUserSync.start();
+  syncAutomationsToAnpr().catch((error) => {
+    log('warn', 'No se pudieron restaurar automatizaciones en ANPR al iniciar', {
+      error: error.message
+    }).catch(() => {});
+  });
   if (config.anpr.webrtcEnabled && config.anpr.webrtcAutostart) {
     startGo2rtcPreview().catch((error) => {
       log('warn', 'No se pudo iniciar WebRTC automaticamente', { error: error.message }).catch(
@@ -2432,6 +2650,22 @@ function registerServices() {
     })
   });
   serviceManager.register({
+    id: 'automations',
+    name: 'Automatizaciones',
+    group: 'bridge',
+    description: 'Gestiona registros automaticos locales y movimientos EOLO Cloud.',
+    controllable: false,
+    status: async () => {
+      const automations = publicAutomationSettings();
+      const running = Boolean(automations.vehicles.eventsEnabled || automations.vehicles.movementsEnabled);
+      return {
+        running,
+        status: running ? 'active' : 'inactive',
+        vehicles: automations.vehicles
+      };
+    }
+  });
+  serviceManager.register({
     id: 'bridge-settings',
     name: 'Ajustes Bridge',
     group: 'bridge',
@@ -2590,6 +2824,109 @@ async function persistFaceDevices(nextDevices) {
   });
 }
 
+function lanesWithStatus() {
+  return (config.lanes || []).map((lane) => ({
+    ...lane,
+    devices: {
+      cameras: lane.devices?.cameras || [],
+      barriers: lane.devices?.barriers || [],
+      biometricReaders: lane.devices?.biometricReaders || [],
+      presenceSensors: lane.devices?.presenceSensors || [],
+      displays: lane.devices?.displays || [],
+      relays: lane.devices?.relays || [],
+      turnstiles: lane.devices?.turnstiles || [],
+      doors: lane.devices?.doors || []
+    }
+  }));
+}
+
+function findLane(laneId) {
+  const target = (config.lanes || []).find((item) => item.id === laneId);
+  if (!target) {
+    const error = new Error('Carril no encontrado');
+    error.status = 404;
+    throw error;
+  }
+  return target;
+}
+
+async function persistLanes(nextLanes) {
+  const saved = await saveRuntimeConfig({ lanes: nextLanes });
+  return saved.lanes || [];
+}
+
+function normalizeLaneInput(input = {}, existing = {}) {
+  const name = String(input.name ?? existing.name ?? '').trim();
+  if (!name) {
+    const error = new Error('El nombre del carril es obligatorio');
+    error.status = 400;
+    throw error;
+  }
+  return {
+    id: existing.id,
+    code: String(input.code ?? existing.code ?? '').trim().slice(0, 40),
+    name: name.slice(0, 120),
+    kind: normalizeLaneKind(input.kind ?? existing.kind),
+    direction: normalizeLaneDirection(input.direction ?? existing.direction),
+    enabled: input.enabled === undefined ? existing.enabled !== false : Boolean(input.enabled),
+    automatic: input.automatic === undefined ? existing.automatic !== false : Boolean(input.automatic),
+    rule: String(input.rule ?? existing.rule ?? '').trim().slice(0, 160),
+    accessId: String(input.accessId ?? existing.accessId ?? '').trim().slice(0, 140),
+    accessName: String(input.accessName ?? existing.accessName ?? '').trim().slice(0, 140),
+    controlPointId: String(input.controlPointId ?? existing.controlPointId ?? '').trim().slice(0, 140),
+    controlPointName: String(input.controlPointName ?? existing.controlPointName ?? '').trim().slice(0, 140),
+    barrierTimeSeconds: intInRange(input.barrierTimeSeconds, existing.barrierTimeSeconds || 6, 1, 120),
+    flowToday: intInRange(input.flowToday, existing.flowToday || 0, 0, 1000000),
+    availabilityPercent: decimalInRange(input.availabilityPercent, existing.availabilityPercent || 99.8, 0, 100),
+    devices: normalizeLaneDevices(input.devices || existing.devices || {}),
+    notes: String(input.notes ?? existing.notes ?? '').trim().slice(0, 1000)
+  };
+}
+
+function normalizeLaneDevices(devices = {}) {
+  return {
+    cameras: normalizeLaneDeviceList(devices.cameras),
+    barriers: normalizeLaneDeviceList(devices.barriers),
+    biometricReaders: normalizeLaneDeviceList(devices.biometricReaders || devices.biometric_readers),
+    presenceSensors: normalizeLaneDeviceList(devices.presenceSensors || devices.presence_sensors),
+    displays: normalizeLaneDeviceList(devices.displays),
+    relays: normalizeLaneDeviceList(devices.relays),
+    turnstiles: normalizeLaneDeviceList(devices.turnstiles),
+    doors: normalizeLaneDeviceList(devices.doors)
+  };
+}
+
+function normalizeLaneDeviceList(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  return [...new Set(source.map((item) => String(item || '').trim()).filter(Boolean))]
+    .map((item) => item.slice(0, 160));
+}
+
+function normalizeLaneKind(value) {
+  const kind = String(value || '').trim().toLowerCase();
+  if (['peatonal', 'pedestrian', 'peatones'].includes(kind)) return 'peatonal';
+  if (['mixto', 'mixed', 'ambos'].includes(kind)) return 'mixto';
+  return 'vehicular';
+}
+
+function normalizeLaneDirection(value) {
+  const direction = String(value || '').trim().toLowerCase();
+  if (['salida', 'egreso', 'exit'].includes(direction)) return 'salida';
+  if (['ambos', 'bidireccional', 'both'].includes(direction)) return 'ambos';
+  return 'entrada';
+}
+
+function decimalInRange(value, fallback, min, max) {
+  const parsed = Number.parseFloat(value ?? '');
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
 function faceDeviceConnectionSignature(faceDevice = {}) {
   return JSON.stringify({
     type: faceDevice.type,
@@ -2719,6 +3056,9 @@ async function downloadEoloSnapshotFromOperatorPermissions(options = {}) {
     });
     const permissions = snapshot.permissions || [];
     const employees = operatorAccessPermissionsToDeviceEmployees(permissions);
+    const anprVehicleSync = await syncOperatorVehiclePermissionsToAnpr(accessId, permissions, {
+      validAfter: snapshot.validAfter
+    });
     const result = {
       ok: true,
       step: 'cloud',
@@ -2737,6 +3077,7 @@ async function downloadEoloSnapshotFromOperatorPermissions(options = {}) {
       snapshotFile: path.basename(eoloUserSync.snapshotPath),
       permissionSnapshotFile: path.basename(operatorAccessPermissionsSnapshotPath()),
       permissionsSummary: summarizeOperatorAccessPermissions(permissions),
+      anprVehicleSync,
       tokenSource: options.tokenSource || 'unknown',
       operatorUserId: options.userId || ''
     };
@@ -2987,6 +3328,19 @@ function activeOperatorCloudSession() {
     return null;
   }
   return latestOperatorCloudSession;
+}
+
+function automaticOperatorCloudSession() {
+  const activeSession = activeOperatorCloudSession();
+  if (activeSession?.token) return activeSession;
+  if (!config.eolo.token) return null;
+  return {
+    token: config.eolo.token,
+    userId: '',
+    expiresAt: null,
+    operator: { name: 'ANPR automatico' },
+    source: 'saved-config-token'
+  };
 }
 
 function operatorAccessVisionCacheKey(session, accessId) {
@@ -3371,6 +3725,69 @@ async function fetchOperatorCloudMovementsToday(session, accessId, controlPointI
   };
 }
 
+async function fetchOperatorCloudMovementsDataApi(session, accessId, controlPointScope = '', options = {}) {
+  if (!session?.token || !accessId) return [];
+  const scope = normalizeControlPointScope(controlPointScope);
+  const defaultStart = new Date();
+  defaultStart.setDate(defaultStart.getDate() - 30);
+  defaultStart.setHours(0, 0, 0, 0);
+  const start = parseOperatorDateBoundary(options.dateFrom, 'start') || defaultStart;
+  const end = parseOperatorDateBoundary(options.dateTo, 'end') || new Date();
+  const constraints = [
+    { key: 'acceso_custom_accesos', constraint_type: 'equals', value: accessId },
+    { key: 'Created Date', constraint_type: 'greater than', value: start.toISOString() },
+    { key: 'Created Date', constraint_type: 'less than', value: end.toISOString() }
+  ];
+  const rawMovements = await fetchOperatorDataList(session, 'accesomovimiento', constraints, {
+    limit: 100,
+    maxPages: 3,
+    sortField: 'Modified Date',
+    descending: true,
+    timeoutMs: 12000
+  });
+  return normalizeOperatorMovements(rawMovements, accessId)
+    .filter((movement) => movementMatchesRequestedControlPoint(movement, scope.ids));
+}
+
+async function resolveOperatorControlPointScope(session, accessId = '', controlPointId = '') {
+  const baseScope = controlPointScopeFromId(controlPointId);
+  if (!session?.token || !accessId || !controlPointId) return baseScope;
+  const points = await fetchOperatorCloudControlPoints(session, accessId);
+  const selected = points.find((point) => point.id === controlPointId) || null;
+  if (!selected) return baseScope;
+  const dependentIds = normalizeThingIdList(
+    selected.dependentControlPointIds ||
+      getField(
+        selected.raw || {},
+        'puntos_dependientes_list_custom_accesoconfiguracion',
+        'puntosdependientes_list_custom_accesoconfiguracion',
+        'puntos_dependientes',
+        'Puntos Dependientes'
+      )
+  );
+  return normalizeControlPointScope({
+    ids: [controlPointId, ...dependentIds],
+    primaryId: controlPointId
+  });
+}
+
+function controlPointScopeFromId(controlPointId = '') {
+  const id = firstThingId(controlPointId);
+  return id ? { ids: [id], primaryId: id } : { ids: [], primaryId: '' };
+}
+
+function normalizeControlPointScope(scope = '') {
+  if (Array.isArray(scope)) {
+    return { ids: [...new Set(scope.map(firstThingId).filter(Boolean))], primaryId: firstThingId(scope[0]) };
+  }
+  if (scope && typeof scope === 'object') {
+    const ids = normalizeThingIdList(scope.ids || scope.controlPointIds || scope);
+    const primaryId = firstThingId(scope.primaryId, scope.id, ids[0]);
+    return { ids: [...new Set(ids)], primaryId };
+  }
+  return controlPointScopeFromId(scope);
+}
+
 async function fetchOperatorCloudResidents(session, accessId, search = '') {
   const method = String(config.operator.residentsMethod || 'GET').toUpperCase();
   const baseUrl = operatorWorkflowUrl(config.operator.residentsEndpoint);
@@ -3478,7 +3895,7 @@ async function fetchOperatorCloudAccessPermissions(session, accessId, options = 
   ];
   const items = await fetchOperatorDataList(session, OPERATOR_ACCESS_PERMISSION_DATA_TYPE, constraints, {
     limit: 100,
-    maxPages: 5,
+    maxPages: 50,
     sortField: 'Modified Date',
     descending: true,
     timeoutMs: 12000
@@ -4143,6 +4560,75 @@ function operatorAccessPermissionsToDeviceEmployees(permissions = []) {
     .filter(Boolean);
 }
 
+function operatorAccessPermissionsToAnprVehicles(permissions = []) {
+  const vehiclesByPlate = new Map();
+  for (const permission of permissions) {
+    if (permission.active === false || !permission.is_vehicle) continue;
+    const plate = normalizeOperatorPlate(permission.plate);
+    if (!plate) continue;
+    const source = operatorAccessPermissionSource(permission);
+    const name = firstText(
+      permission.principal_name,
+      permission.user_name,
+      getField(source, 'nombreprincipal_text', 'NombrePrincipal', 'Nombre', 'nombreusuario_text', 'NombreUsuario'),
+      'Permiso vehicular'
+    );
+    const phone = firstText(
+      permission.phone,
+      permission.telefono,
+      getField(source, 'telefono_text', 'telefono', 'Telefono', 'Teléfono', 'phone')
+    );
+    if (!vehiclesByPlate.has(plate)) {
+      vehiclesByPlate.set(plate, {
+        plate,
+        name,
+        phone,
+        permissionId: permission.id || '',
+        permissionId2: permission.id2_text || permission.id2 || ''
+      });
+    }
+  }
+  return [...vehiclesByPlate.values()];
+}
+
+async function syncOperatorVehiclePermissionsToAnpr(accessId, permissions = [], options = {}) {
+  const vehicles = operatorAccessPermissionsToAnprVehicles(permissions);
+  try {
+    const anpr = await fetchAnprJson('/api/vehicles/permissions-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        access: accessId,
+        source: 'permisoaccesos',
+        validAfter: options.validAfter || '',
+        vehicles
+      }),
+      timeoutMs: 10000
+    });
+    const result = {
+      ok: true,
+      source: 'permisoaccesos',
+      access: accessId,
+      vehicles: anpr.vehicles ?? vehicles.length
+    };
+    await log('info', 'Vehiculos ANPR sincronizados desde PermisoAccesos', result);
+    return result;
+  } catch (error) {
+    const result = {
+      ok: false,
+      source: 'permisoaccesos',
+      access: accessId,
+      vehicles: vehicles.length,
+      error: error.message
+    };
+    await log('warn', 'No se pudieron sincronizar vehiculos ANPR desde PermisoAccesos', {
+      ...result,
+      status: error.status
+    });
+    return result;
+  }
+}
+
 function operatorAccessPermissionsSnapshotPath() {
   return path.join(config.dataDir, 'operator-access-permissions.json');
 }
@@ -4278,6 +4764,7 @@ async function handleFacialAccessEvent(record = {}) {
         context.accessId,
         context.controlPointId
       );
+      rememberRecentAutomaticOperatorMovement(context.accessId, context.controlPointId, createdMovement, movementPayload);
       invalidateOperatorInventorySummary(context.accessId);
       await recordOperatorMovementEvent({ operatorSession: session }, {
         payload: movementPayload,
@@ -4342,6 +4829,471 @@ async function handleFacialAccessEvent(record = {}) {
       error: error.message
     });
   }
+}
+
+async function handleAnprVehicleAutomationEvent(payload = {}) {
+  const settings = publicAutomationSettings().vehicles;
+  const record = normalizeAnprVehicleAutomationRecord(payload);
+  if (!record.plate) {
+    const error = new Error('La deteccion ANPR no incluye placa valida.');
+    error.status = 400;
+    throw error;
+  }
+  if (!settings.eventsEnabled && !settings.movementsEnabled) {
+    return { skipped: true, reason: 'vehicle-automations-disabled' };
+  }
+  const permission = findAnprVehiclePermissionForPlate(record.plate, record.accessId);
+  const movementRecord = permission ? applyAnprVehiclePermission(record, permission) : record;
+  if (!permission) {
+    await log('warn', 'Deteccion ANPR sin permiso vehicular descargado correspondiente', {
+      plate: record.plate,
+      camera: record.cameraName,
+      accessId: record.accessId
+    });
+  }
+
+  const result = {
+    status: movementRecord.status,
+    plate: movementRecord.plate,
+    camera: movementRecord.cameraName,
+    permissionType: movementRecord.permissionType || '',
+    event: null,
+    movement: null
+  };
+
+  if (settings.movementsEnabled) {
+    try {
+      result.movement = await handleAnprVehicleAutomaticMovement(movementRecord);
+    } catch (error) {
+      result.movement = { created: false, error: error.message, status: error.status };
+      await log('warn', 'No se pudo crear movimiento vehicular automatico desde ANPR', {
+        error: error.message,
+        status: error.status,
+        plate: movementRecord.plate,
+        camera: movementRecord.cameraName
+      });
+    }
+  }
+  if (settings.eventsEnabled) {
+    result.event = await recordAnprVehicleLocalEvent(movementRecord, result.movement);
+  }
+  return result;
+}
+
+function normalizeAnprVehicleAutomationRecord(payload = {}) {
+  const plate = normalizeOperatorPlate(firstText(payload.plate, payload.placa, payload.license_plate, payload.licensePlate));
+  const cameraName = firstText(payload.camera, payload.camera_name, payload.cameraName, payload.device_name);
+  const rawCameraType = firstText(payload.camera_type, payload.cameraType, payload.direction, payload.tipo_camara);
+  const isExit = /sal|egres|exit|out/i.test(rawCameraType);
+  const barrierIds = normalizeThingIdList(payload.barrier_ids || payload.barriers || payload.barrierIds);
+  const detectedAt = firstText(payload.detected_at, payload.detectedAt, payload.timestamp) || new Date().toISOString();
+  return {
+    plate,
+    cameraName,
+    cameraType: isExit ? 'Salida' : 'Entrada',
+    status: isExit ? 'Egresado' : 'Ingresado',
+    detectedAt,
+    vehicleClass: firstText(payload.vehicle_class, payload.vehicleClass, payload.clase),
+    vehicleConfidence: Number(payload.vehicle_confidence ?? payload.vehicleConfidence ?? payload.confidence ?? 0) || 0,
+    accessId: firstText(payload.access_id, payload.accessId, payload.id_acceso, config.eolo.access),
+    accessName: firstText(payload.access_name, payload.accessName, payload.acceso_name),
+    controlPointId: firstThingId(payload.control_point_id, payload.controlPointId, payload.id_punto_control),
+    controlPointName: firstText(payload.control_point_name, payload.controlPointName, payload.punto_control_name),
+    barrierIds,
+    barrierAssociated: firstBooleanOrDefault(payload.barrier_associated ?? payload.barrierAssociated, barrierIds.length > 0),
+    barrierCommandAttempted: firstBoolean(payload.barrier_command_attempted, payload.barrierCommandAttempted),
+    barrierCommandSent: firstBoolean(payload.barrier_command_sent, payload.barrierCommandSent, payload.barrier_command_attempted),
+    imageDataUrl: normalizeAutomationImageDataUrl(
+      payload.vehicle_photo_data_url ||
+      payload.entry_photo_data_url ||
+      payload.image ||
+      payload.imagen ||
+      payload.snapshot
+    ),
+    raw: payload
+  };
+}
+
+function findAnprVehiclePermissionForPlate(plate = '', requestedAccessId = '') {
+  const normalizedPlate = normalizeOperatorPlate(plate);
+  if (!normalizedPlate) return null;
+  const snapshot =
+    readOperatorAccessPermissionsSnapshot(config.eolo.access, '') ||
+    readOperatorAccessPermissionsSnapshot('', '') ||
+    null;
+  const permissions = snapshot?.permissions || [];
+  const requestedAccess = firstText(requestedAccessId);
+  const matches = permissions.filter((permission) => (
+    permission.active !== false &&
+    permission.is_vehicle &&
+    normalizeOperatorPlate(permission.plate) === normalizedPlate
+  ));
+  if (!matches.length) return null;
+  return matches.find((permission) => requestedAccess && permission.access_id === requestedAccess) ||
+    matches.find((permission) => permission.access_id === snapshot.access) ||
+    matches[0];
+}
+
+function applyAnprVehiclePermission(record = {}, permission = {}) {
+  const permissionType = anprVehiclePermissionType(permission);
+  const movementType = anprVehiclePermissionMovementType(permissionType);
+  return {
+    ...record,
+    accessId: firstText(permission.access_id, record.accessId, config.eolo.access),
+    permissionId: permission.id || '',
+    permissionId2: permission.id2_text || permission.id2 || '',
+    permissionType,
+    movementType,
+    principalName: firstText(permission.principal_name, permission.user_name, record.principalName),
+    residentId: firstThingId(permission.resident_id, record.residentId),
+    userId: firstThingId(permission.user_id, record.userId),
+    qrCode: firstText(permission.qr_code, record.qrCode),
+    cardNumber: firstText(permission.card_number, record.cardNumber)
+  };
+}
+
+function anprVehiclePermissionType(permission = {}) {
+  const type = bubbleAccessPermissionTypeOption(
+    permission.permission_type ||
+    inferOperatorAccessPermissionType(operatorAccessPermissionSource(permission), permission.id2_text || permission.id2)
+  );
+  if (/residente/i.test(type)) return 'Residente';
+  if (/visit/i.test(type) || /visita/i.test(type)) return 'Visitante';
+  return type || 'PermisoAcceso';
+}
+
+function anprVehiclePermissionMovementType(permissionType = '') {
+  return /residente/i.test(permissionType) ? 'Residente' : 'Visita';
+}
+
+function normalizeAutomationImageDataUrl(value = '') {
+  const text = firstText(value);
+  if (!text) return '';
+  if (/^data:image\//i.test(text)) return text;
+  if (/^https?:\/\//i.test(text) || text.startsWith('//')) return normalizeFileUrl(text);
+  const compact = text.replace(/\s+/g, '');
+  if (/^[A-Za-z0-9+/]+={0,2}$/.test(compact) && compact.length > 64) {
+    return `data:image/jpeg;base64,${compact}`;
+  }
+  return firstFileUrl(text);
+}
+
+async function recordAnprVehicleLocalEvent(record = {}, movementResult = {}) {
+  const barrierText = record.barrierAssociated
+    ? `pluma asociada ${record.barrierCommandSent ? 'comunicada' : 'sin comunicacion registrada'}`
+    : 'sin pluma asociada';
+  const permissionText = record.permissionType ? `permiso ${record.permissionType}; ` : '';
+  const event = {
+    type: 'Evento vehicular automatico',
+    eventType: 'anpr_vehicle_automation',
+    eventState: record.status === 'Egresado' ? 'egress' : 'ingress',
+    dateTime: record.detectedAt,
+    plate: record.plate,
+    placa: record.plate,
+    camera: record.cameraName,
+    device: 'ANPR',
+    detail: `${record.status} automatico por ${permissionText}camara ${record.cameraName || 'ANPR'}; ${barrierText}.`,
+    status: record.status,
+    objectType: 'vehicle',
+    hasVehicle: true,
+    vehicle_class: record.vehicleClass,
+    vehicle_confidence: record.vehicleConfidence,
+    permission_id: record.permissionId,
+    permission_id2: record.permissionId2,
+    permission_type: record.permissionType,
+    movement_type: record.movementType,
+    principal_name: record.principalName,
+    access_id: record.accessId,
+    access_name: record.accessName,
+    control_point_id: record.controlPointId,
+    control_point_name: record.controlPointName,
+    barrier_ids: record.barrierIds,
+    barrier_associated: record.barrierAssociated,
+    barrier_command_attempted: record.barrierCommandAttempted,
+    barrier_command_sent: record.barrierCommandSent,
+    movement_source: movementResult?.source || '',
+    movement_id: movementResult?.movementId || '',
+    raw: {
+      anpr: {
+        cameraType: record.cameraType,
+        detectedAt: record.detectedAt,
+        permissionType: record.permissionType,
+        permissionId: record.permissionId,
+        raw: record.raw
+      },
+      movement: movementResult || null
+    }
+  };
+  await addEvent(event);
+  return {
+    recorded: true,
+    plate: record.plate,
+    status: record.status
+  };
+}
+
+async function handleAnprVehicleAutomaticMovement(record = {}) {
+  const session = automaticOperatorCloudSession();
+  const context = await resolveAnprVehicleMovementContext(record, session);
+  if (!context.accessId || !context.controlPointId) {
+    await log('warn', 'Movimiento vehicular automatico omitido por falta de acceso o punto de control', {
+      plate: record.plate,
+      camera: record.cameraName,
+      accessId: context.accessId,
+      controlPointId: context.controlPointId,
+      contextSource: context.source
+    });
+    return { created: false, reason: 'missing-context', accessId: context.accessId, controlPointId: context.controlPointId };
+  }
+
+  const movementPayload = await ensureOperatorMovementLocalId2(
+    anprVehicleMovementPayload(record, context),
+    context.accessId
+  );
+
+  try {
+    if (config.operator.authMode === 'cloud' && session?.token) {
+      const createdMovement = await createOperatorCloudMovement(
+        session,
+        movementPayload,
+        context.accessId,
+        context.controlPointId
+      );
+      invalidateOperatorInventorySummary(context.accessId);
+      await recordOperatorMovementEvent({ operatorSession: session }, {
+        payload: movementPayload,
+        movement: createdMovement,
+        accessId: context.accessId,
+        controlPointId: context.controlPointId,
+        source: 'anpr-vehicle-cloud'
+      });
+      await log('info', 'Movimiento vehicular automatico creado desde ANPR', {
+        movementId: createdMovement?.id || createdMovement?.uid_bubble || '',
+        plate: record.plate,
+        status: record.status,
+        camera: record.cameraName,
+        accessId: context.accessId,
+        controlPointId: context.controlPointId
+      });
+      return {
+        created: true,
+        source: 'cloud',
+        movementId: createdMovement?.id || createdMovement?.uid_bubble || '',
+        status: record.status
+      };
+    }
+
+    const missingSessionError = new Error('No hay sesion EOLO activa para sincronizar movimiento vehicular automatico.');
+    missingSessionError.status = 401;
+    const pending = await createPendingOperatorMovement(
+      movementPayload,
+      context.accessId,
+      context.controlPointId,
+      missingSessionError
+    );
+    await recordOperatorMovementEvent({ operatorSession: { operator: { name: 'ANPR automatico' } } }, {
+      payload: movementPayload,
+      movement: pending.movement,
+      accessId: context.accessId,
+      controlPointId: context.controlPointId,
+      source: 'anpr-vehicle-local-pending'
+    });
+    await log('warn', 'Movimiento vehicular automatico guardado pendiente por falta de sesion EOLO activa', {
+      localId: pending.id,
+      plate: record.plate,
+      accessId: context.accessId,
+      controlPointId: context.controlPointId
+    });
+    return {
+      created: true,
+      pending: true,
+      source: 'local-pending',
+      movementId: pending.id,
+      status: record.status
+    };
+  } catch (error) {
+    if (!isRetryableOperatorCloudError(error)) throw error;
+    const pending = await createPendingOperatorMovement(
+      movementPayload,
+      context.accessId,
+      context.controlPointId,
+      error
+    );
+    await recordOperatorMovementEvent({ operatorSession: session || { operator: { name: 'ANPR automatico' } } }, {
+      payload: movementPayload,
+      movement: pending.movement,
+      accessId: context.accessId,
+      controlPointId: context.controlPointId,
+      source: 'anpr-vehicle-local-pending'
+    });
+    await log('warn', 'Movimiento vehicular automatico guardado localmente por EOLO Cloud inaccesible', {
+      localId: pending.id,
+      plate: record.plate,
+      accessId: context.accessId,
+      controlPointId: context.controlPointId,
+      error: error.message
+    });
+    return {
+      created: true,
+      pending: true,
+      source: 'local-pending',
+      movementId: pending.id,
+      status: record.status
+    };
+  }
+}
+
+async function resolveAnprVehicleMovementContext(record = {}, session = null) {
+  const accessId = firstText(record.accessId, config.eolo.access);
+  if (record.controlPointId) {
+    return {
+      accessId,
+      controlPointId: record.controlPointId,
+      controlPointName: record.controlPointName,
+      source: 'anpr-payload'
+    };
+  }
+  if (!session?.token || !accessId) {
+    return { accessId, controlPointId: '', controlPointName: '', source: 'missing-session' };
+  }
+
+  const points = await fetchOperatorCloudControlPoints(session, accessId).catch(async (error) => {
+    await log('warn', 'No se pudieron resolver puntos de control para automatizacion vehicular ANPR', {
+      error: error.message,
+      status: error.status,
+      accessId,
+      plate: record.plate
+    });
+    return [];
+  });
+  const activePoints = points.filter((point) => point.active !== false);
+  const selected =
+    matchAnprVehicleControlPoint(activePoints, record) ||
+    preferredAnprVehicleControlPoint(activePoints) ||
+    preferredAnprVehicleControlPoint(points) ||
+    activePoints[0] ||
+    points[0] ||
+    null;
+  return {
+    accessId,
+    controlPointId: selected?.id || '',
+    controlPointName: selected?.name || '',
+    source: selected ? 'cloud-control-point' : 'no-control-point'
+  };
+}
+
+function preferredAnprVehicleControlPoint(points = []) {
+  return points.find((point) => isVehicleCapableControlPoint(point) && isRegisterCapableControlPoint(point)) ||
+    points.find(isVehicleCapableControlPoint) ||
+    null;
+}
+
+function isVehicleCapableControlPoint(point = {}) {
+  const typeText = normalizeSearchText(firstText(point.type, point.raw?.tipo_acceso_option_tipo_acceso_control));
+  if (!typeText) return true;
+  if (/peat|persona|pax/.test(typeText) && !/veh|auto|car|ambos|mixto|todos/.test(typeText)) return false;
+  return /veh|auto|car|ambos|mixto|todos/.test(typeText) || !/peat|persona|pax/.test(typeText);
+}
+
+function isRegisterCapableControlPoint(point = {}) {
+  const actionText = normalizeSearchText(firstText(point.actionMode, point.actionType, point.raw?.tipo_accion_option_tipo_accion_control_os));
+  return !/autor|solicit/.test(actionText);
+}
+
+function matchAnprVehicleControlPoint(points = [], record = {}) {
+  const cameraNeedle = normalizeSearchText(record.cameraName);
+  const typeNeedle = normalizeSearchText(record.cameraType);
+  if (!cameraNeedle) return null;
+  return points.find((point) => {
+    const directCamera = normalizeSearchText(record.status === 'Egresado' ? point.exitCamera : point.entryCamera);
+    if (directCamera && (directCamera === cameraNeedle || directCamera.includes(cameraNeedle) || cameraNeedle.includes(directCamera))) {
+      return true;
+    }
+    return (point.cameras || []).some((camera) => {
+      const name = normalizeSearchText(camera.name);
+      const cameraType = normalizeSearchText(camera.type);
+      return (
+        name &&
+        (name === cameraNeedle || name.includes(cameraNeedle) || cameraNeedle.includes(name)) &&
+        (!typeNeedle || !cameraType || cameraType.includes(typeNeedle) || typeNeedle.includes(cameraType))
+      );
+    });
+  }) || null;
+}
+
+function anprVehicleMovementPayload(record = {}, context = {}) {
+  const barrierNote = record.barrierAssociated
+    ? `Pluma asociada: ${record.barrierIds.join(', ') || 'sin id'}; comunicada: ${record.barrierCommandSent ? 'si' : 'no'}.`
+    : 'Sin pluma asociada.';
+  const permissionNote = record.permissionType
+    ? `Permiso: ${record.permissionType}${record.permissionId2 ? ` (${record.permissionId2})` : ''}.`
+    : 'Permiso vehicular sin tipo identificado.';
+  const note = `Movimiento vehicular automatico por ANPR. ${permissionNote} Camara: ${record.cameraName || 'sin nombre'} (${record.cameraType}). ${barrierNote}`;
+  const movementTimeKey = record.status === 'Egresado'
+    ? { fecha_salida: record.detectedAt, horasalida_date: record.detectedAt }
+    : { fecha_entrada: record.detectedAt, horaentrada_date: record.detectedAt };
+  const movementType = record.movementType || anprVehiclePermissionMovementType(record.permissionType);
+  const visitorName = normalizeOperatorPersonName(record.principalName || `VEHICULO ${record.plate}`);
+  return {
+    access_id: context.accessId,
+    id_acceso: context.accessId,
+    access_name: record.accessName,
+    control_point_id: context.controlPointId,
+    id_punto_control: context.controlPointId,
+    control_point_name: context.controlPointName || record.controlPointName,
+    punto_control_name: context.controlPointName || record.controlPointName,
+    kind: 'Vehiculo',
+    tipo_transporte: 'Vehiculo',
+    movement_type: movementType,
+    razon_acceso: movementType,
+    visitor_name: visitorName,
+    nombre_visitante: visitorName,
+    placa: record.plate,
+    placas: record.plate,
+    permiso_acceso_id: record.permissionId,
+    permisoacceso_id: record.permissionId,
+    source_permission_id: record.permissionId,
+    permiso_acceso_id2: record.permissionId2,
+    permission_id2: record.permissionId2,
+    usuario_id: record.userId,
+    permission_user_id: record.userId,
+    resident_id: record.residentId,
+    residente_id: record.residentId,
+    qr_code: record.qrCode,
+    codigo_qr: record.qrCode,
+    card_number: record.cardNumber,
+    numero_tarjeta: record.cardNumber,
+    permission_type: record.permissionType,
+    status: record.status,
+    vehicle_type: anprVehicleClassToType(record.vehicleClass),
+    tipo_vehiculo: anprVehicleClassToType(record.vehicleClass),
+    vehicle_category: 'General',
+    categoria_vehiculo: 'General',
+    notes: note,
+    nota: note,
+    camera: record.cameraName,
+    camera_type: record.cameraType,
+    barrier_ids: record.barrierIds.join(','),
+    barrier_associated: record.barrierAssociated,
+    barrier_command_attempted: record.barrierCommandAttempted,
+    barrier_command_sent: record.barrierCommandSent,
+    detected_at: record.detectedAt,
+    vehicle_photo_data_url: record.imageDataUrl,
+    entry_photo_data_url: record.imageDataUrl,
+    approved_by_device: true,
+    aprobado_por_dispositivo: true,
+    source: 'anpr-vehicle-automation',
+    operator_name: 'ANPR automatico',
+    ...movementTimeKey
+  };
+}
+
+function anprVehicleClassToType(value = '') {
+  const text = normalizeSearchText(value);
+  if (/truck|camion|camioneta|pickup/.test(text)) return 'Camioneta';
+  if (/bus|autobus/.test(text)) return 'Autobus';
+  if (/motor|moto/.test(text)) return 'Motocicleta';
+  return 'Automovil';
 }
 
 function isMovementCandidateFacialEvent(record = {}) {
@@ -5749,9 +6701,7 @@ async function enrichOperatorCloudMovement(
       return [];
     });
   if (companionIds.length) patches.lista_acompa_antes_list_custom_accesomovimiento = companionIds;
-  const automaticPatch = isAutomaticFacialMovementPayload(payload)
-    ? automaticFacialMovementPatchPayload(payload)
-    : {};
+  const automaticPatch = automaticMovementPatchPayload(payload);
 
   if (automaticPatch.Estatus) {
     await tryOperatorDataPayloads(
@@ -5760,7 +6710,7 @@ async function enrichOperatorCloudMovement(
         { Estatus: automaticPatch.Estatus }
       ]
     ).catch(async (error) => {
-      await log('warn', 'No se pudo marcar movimiento facial como Ingresado en EOLO', {
+      await log('warn', 'No se pudo marcar movimiento automatico en EOLO', {
         error: error.message,
         status: error.status,
         movementId: movement.id,
@@ -5776,7 +6726,7 @@ async function enrichOperatorCloudMovement(
         { Referencia: automaticPatch.Referencia }
       ]
     ).catch(async (error) => {
-      await log('warn', 'No se pudo guardar nota de movimiento facial en EOLO', {
+      await log('warn', 'No se pudo guardar nota de movimiento automatico en EOLO', {
         error: error.message,
         status: error.status,
         movementId: movement.id
@@ -5807,25 +6757,47 @@ async function enrichOperatorCloudMovement(
       });
     });
   }
-  const forcedIncoming = isAutomaticFacialMovementPayload(payload);
+  const forcedStatus = automaticPatch.Estatus;
   return {
     ...movement,
     vehicle_id: vehicle?.id || movement.vehicle_id || '',
     driver_id: driver?.id || movement.driver_id || '',
     driver: driver?.name || movement.driver || '',
     companions: companionIds.length ? companionIds : movement.companions || [],
-    ...(forcedIncoming ? { status: 'Ingresado', can_exit: true } : {})
+    ...(forcedStatus ? { status: forcedStatus, can_exit: forcedStatus === 'Ingresado', can_edit: forcedStatus !== 'Egresado' } : {})
   };
 }
 
+function automaticMovementPatchPayload(payload = {}) {
+  if (isAutomaticFacialMovementPayload(payload)) return automaticFacialMovementPatchPayload(payload);
+  if (isAutomaticVehicleMovementPayload(payload)) return automaticVehicleMovementPatchPayload(payload);
+  return {};
+}
+
 function isAutomaticFacialMovementPayload(payload = {}) {
-  return payload.source === 'facial-stream' || payload.approved_by_device === true || payload.aprobado_por_dispositivo === true;
+  return payload.source === 'facial-stream' || (
+    payload.source !== 'anpr-vehicle-automation' &&
+    (payload.approved_by_device === true || payload.aprobado_por_dispositivo === true)
+  );
 }
 
 function automaticFacialMovementPatchPayload(payload = {}) {
   const note = firstText(payload.notes, payload.nota);
   return {
     Estatus: 'Ingresado',
+    ...(note ? { Referencia: note } : {})
+  };
+}
+
+function isAutomaticVehicleMovementPayload(payload = {}) {
+  return payload.source === 'anpr-vehicle-automation';
+}
+
+function automaticVehicleMovementPatchPayload(payload = {}) {
+  const note = firstText(payload.notes, payload.nota);
+  const status = normalizeMovementStatus(payload.status, payload.fecha_entrada || payload.horaentrada_date, payload.fecha_salida || payload.horasalida_date);
+  return {
+    Estatus: status === 'Egresado' ? 'Egresado' : 'Ingresado',
     ...(note ? { Referencia: note } : {})
   };
 }
@@ -6993,6 +7965,18 @@ function buildOperatorMovementPayload(payload = {}, accessId, controlPointId) {
     control_point_action_mode: controlPointActionMode,
     operator_name: value('operator_name'),
     status: value('status') || statusByAction,
+    fecha_entrada: value('fecha_entrada', 'horaentrada_date'),
+    horaentrada_date: value('horaentrada_date', 'fecha_entrada'),
+    fecha_salida: value('fecha_salida', 'horasalida_date'),
+    horasalida_date: value('horasalida_date', 'fecha_salida'),
+    detected_at: value('detected_at', 'detectedAt'),
+    camera: value('camera', 'camera_name'),
+    camera_name: value('camera_name', 'camera'),
+    camera_type: value('camera_type', 'cameraType'),
+    barrier_ids: value('barrier_ids', 'barrierIds'),
+    barrier_associated: value('barrier_associated', 'barrierAssociated'),
+    barrier_command_attempted: value('barrier_command_attempted', 'barrierCommandAttempted'),
+    barrier_command_sent: value('barrier_command_sent', 'barrierCommandSent'),
     id_photo_data_url: value('id_photo_data_url', 'identification_photo_data_url'),
     identification_photo_data_url: value('identification_photo_data_url', 'id_photo_data_url'),
     id_photo_url: value('id_photo_url', 'identification_photo_url'),
@@ -7026,9 +8010,11 @@ function filterOperatorMovements(movements, query = {}) {
   const search = String(query.search || '').trim().toLowerCase();
   const status = String(query.status || '').trim().toLowerCase();
   const kind = String(query.kind || '').trim().toLowerCase();
+  const controlPointIds = query._controlPointIds || String(query.control_point || query.control_point_id || '').trim();
   const dateFrom = parseOperatorDateBoundary(query.date_from, 'start');
   const dateTo = parseOperatorDateBoundary(query.date_to || query.date, 'end');
   return movements.filter((movement) => {
+    if (!movementMatchesRequestedControlPoint(movement, controlPointIds)) return false;
     if (status && String(movement.status || '').toLowerCase() !== status) return false;
     if (kind && String(movement.kind || '').toLowerCase() !== kind) return false;
     const movementDate = parseOperatorDateValue(movement.created_at || movement.fecha_entrada);
@@ -7050,6 +8036,117 @@ function filterOperatorMovements(movements, query = {}) {
       .toLowerCase();
     return haystack.includes(search);
   });
+}
+
+function movementMatchesRequestedControlPoint(movement = {}, requestedControlPointIds = '') {
+  const requestedIds = normalizeThingIdList(requestedControlPointIds);
+  if (!requestedIds.length) return true;
+  const movementControlPointId = firstThingId(
+    movement.controlPointId,
+    movement.control_point_id,
+    movement.id_punto_control,
+    getField(
+      movement.raw || {},
+      'control_point_id',
+      'id_punto_control',
+      'Punto Control',
+      'Punto de Control',
+      'PuntoControl',
+      'punto_custom_accesoconfiguracion',
+      'punto_control_custom_accesoconfiguracion',
+      'puntocontrol_custom_accesoconfiguracion',
+      'AccesoConfiguracion',
+      'accesoconfiguracion_custom_accesoconfiguracion'
+    )
+  );
+  return !movementControlPointId || requestedIds.includes(movementControlPointId);
+}
+
+function mergeOperatorMovementLists(...lists) {
+  const merged = [];
+  const seen = new Set();
+  for (const list of lists) {
+    for (const movement of Array.isArray(list) ? list : []) {
+      if (!movement) continue;
+      const key = operatorMovementDedupKey(movement);
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      merged.push(movement);
+    }
+  }
+  return merged;
+}
+
+function operatorMovementDedupKey(movement = {}) {
+  return firstText(
+    movement.id,
+    movement.uid_bubble,
+    movement.folio_display,
+    movement.id2,
+    movement.id2_text,
+    getField(movement.raw || {}, '_id', 'id', 'unique_id', 'id2_text', 'id2', 'ID2')
+  ) || [
+    normalizeOperatorPlate(movement.placa),
+    bubbleDateToIso(movement.created_at || movement.fecha_entrada),
+    firstText(movement.status)
+  ].join('|');
+}
+
+function rememberRecentAutomaticOperatorMovement(accessId = '', controlPointId = '', movement = {}, payload = {}) {
+  const normalized = normalizeOperatorMovement(movement, accessId) || {
+    id: firstThingId(movement) || firstText(payload.id2_text, payload.id2) || crypto.randomUUID(),
+    uid_bubble: firstThingId(movement),
+    folio_display: firstText(payload.id2_text, payload.id2) || firstThingId(movement),
+    accessId,
+    controlPointId,
+    visitor_name: firstText(payload.visitor_name, payload.nombre_visitante) || 'Visitante',
+    placa: firstText(payload.placa, payload.placas),
+    notes: firstText(payload.notes, payload.nota),
+    kind: firstText(payload.kind, payload.tipo_transporte) || 'Vehiculo',
+    movement_type: firstText(payload.movement_type, payload.razon_acceso) || 'Visita',
+    status: normalizeMovementStatus(payload.status || 'Ingresado', payload.fecha_entrada || payload.horaentrada_date, payload.fecha_salida || payload.horasalida_date),
+    fecha_entrada: firstText(payload.fecha_entrada, payload.horaentrada_date, new Date().toISOString()),
+    fecha_salida: firstText(payload.fecha_salida, payload.horasalida_date),
+    created_at: firstText(payload.fecha_entrada, payload.horaentrada_date, new Date().toISOString()),
+    modified_at: new Date().toISOString(),
+    raw: movement
+  };
+  const key = operatorMovementDedupKey(normalized);
+  if (!key) return;
+  recentAutomaticOperatorMovements.set(key, {
+    movement: {
+      ...normalized,
+      accessId: normalized.accessId || accessId,
+      controlPointId: normalized.controlPointId || controlPointId
+    },
+    accessId,
+    controlPointId,
+    savedAt: Date.now()
+  });
+  pruneRecentAutomaticOperatorMovements();
+}
+
+function recentAutomaticOperatorMovementsForQuery(accessId = '', controlPointScope = '', query = {}) {
+  pruneRecentAutomaticOperatorMovements();
+  const scope = normalizeControlPointScope(controlPointScope);
+  return [...recentAutomaticOperatorMovements.values()]
+    .filter((item) => {
+      if (accessId && item.accessId !== accessId && item.movement.accessId !== accessId) return false;
+      if (scope.ids.length && item.controlPointId && !scope.ids.includes(item.controlPointId)) return false;
+      return movementMatchesRequestedControlPoint(item.movement, scope.ids);
+    })
+    .map((item) => item.movement)
+    .filter((movement) => filterOperatorMovements([movement], { ...query, _controlPointIds: scope.ids }).length > 0);
+}
+
+function pruneRecentAutomaticOperatorMovements() {
+  const ttlMs = 30 * 60 * 1000;
+  const now = Date.now();
+  for (const [key, item] of recentAutomaticOperatorMovements.entries()) {
+    if (!item?.savedAt || now - item.savedAt > ttlMs) {
+      recentAutomaticOperatorMovements.delete(key);
+    }
+  }
 }
 
 function sortOperatorMovements(movements, query = {}) {
@@ -7701,9 +8798,17 @@ function normalizeOperatorControlPoints(body, fallbackAccessId = '') {
         prefix: firstText(camera.prefix, camera.prefijo, camera.Prefijo)
       }))
       .filter((camera) => camera.name);
-    const actionType = item.actionType || item['Tipo Accion'] || item.tipo_accion_option_tipo_accion_control_os || '';
-    const actionMode = normalizeControlPointAction(actionType);
-    return {
+      const actionType = item.actionType || item['Tipo Accion'] || item.tipo_accion_option_tipo_accion_control_os || '';
+      const actionMode = normalizeControlPointAction(actionType);
+      const dependentControlPointIds = normalizeThingIdList(
+        item.dependentControlPointIds ||
+          item.dependent_control_point_ids ||
+          item.puntos_dependientes_list_custom_accesoconfiguracion ||
+          item.puntosdependientes_list_custom_accesoconfiguracion ||
+          item.puntos_dependientes ||
+          item['Puntos Dependientes']
+      );
+      return {
       id:
         item.id ||
         item._id ||
@@ -7738,6 +8843,7 @@ function normalizeOperatorControlPoints(body, fallbackAccessId = '') {
       exitCamera: item.exitCamera || item.barrera1_text || '',
       cameras,
       cameraIds,
+      dependentControlPointIds,
       ringLevel: item.ringLevel || item['Nivel Anillo'] || '',
       hideInspection: item.hideInspection ?? item.OcultarInspeccion ?? false,
       active: item.active ?? item.activo ?? item.Activo ?? true,

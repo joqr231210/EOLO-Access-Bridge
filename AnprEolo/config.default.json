@@ -25,5 +25,7 @@
   "min_plate_height_ratio": 0.001,
   "strict_plate_validation": false,
   "require_vehicle_detection": true,
-  "min_vehicle_confidence": 0.25
+  "min_vehicle_confidence": 0.25,
+  "auto_vehicle_events": false,
+  "auto_vehicle_movements": false
 }

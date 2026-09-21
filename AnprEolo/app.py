@@ -29,6 +29,7 @@ SNAPSHOT_DIR = os.environ.get(
     os.path.join(os.path.dirname(DB_FILE), "anpr-snapshots")
 )
 CONTROL_BASE_URL = os.environ.get("ANPR_CONTROL_BASE_URL", "http://127.0.0.1:8090").rstrip("/")
+AUTOMATION_CALLBACK_URL = os.environ.get("ANPR_AUTOMATION_CALLBACK_URL", "").rstrip("/")
 DEMO_BARRIER = {
     "id_barra": "demo-barrier",
     "numero_barra": "1",
@@ -67,6 +68,10 @@ def load_config():
         data = json.load(f)
         if "barriers" not in data:
             data["barriers"] = [dict(DEMO_BARRIER)]
+        if "auto_vehicle_events" not in data:
+            data["auto_vehicle_events"] = False
+        if "auto_vehicle_movements" not in data:
+            data["auto_vehicle_movements"] = False
         return data
 
 CLASSES_VEHICULOS = ['Car', 'Motorcycle', 'Truck', 'Bus', 'Bicycle']
@@ -205,6 +210,70 @@ def control_post(path, timeout=1):
         return requests.post(f"{CONTROL_BASE_URL}{path}", timeout=timeout)
     except Exception:
         return None
+
+def config_bool(config, key, default=False):
+    value = config.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "si", "sí"}
+
+def camera_for_name(config, camera_name):
+    return next((cam for cam in config.get("cameras", []) if cam.get("name") == camera_name), None)
+
+def camera_barrier_ids(config, camera_name):
+    camera = camera_for_name(config, camera_name)
+    linked_ids = []
+    if camera:
+        for value in camera.get("barrier_ids", []) or []:
+            b_id = str(value).strip()
+            if b_id and b_id not in linked_ids:
+                linked_ids.append(b_id)
+    for barrier in config.get("barriers", []) or []:
+        b_id = str(barrier.get("id_barra", "")).strip()
+        if b_id and barrier.get("camera_name") == camera_name and b_id not in linked_ids:
+            linked_ids.append(b_id)
+    return linked_ids
+
+def vehicle_automation_enabled(config):
+    return (
+        config_bool(config, "auto_vehicle_events", False) or
+        config_bool(config, "auto_vehicle_movements", False)
+    )
+
+def image_to_base64(img):
+    ok, buffer = cv2.imencode('.jpg', img)
+    if not ok:
+        return ""
+    return base64.b64encode(buffer).decode('utf-8')
+
+def notify_vehicle_automation(img, texto, camera_name, clase, vehicle_confidence, config, barrier_command_attempted=False):
+    if not AUTOMATION_CALLBACK_URL or not vehicle_automation_enabled(config):
+        return
+    camera = camera_for_name(config, camera_name) or {}
+    barrier_ids = camera_barrier_ids(config, camera_name)
+    data = {
+        "plate": texto,
+        "placa": texto,
+        "camera": camera_name,
+        "camera_name": camera_name,
+        "camera_type": camera.get("type", "Entrada"),
+        "access_id": config.get("id_acceso", ""),
+        "vehicle_class": clase,
+        "vehicle_confidence": float(vehicle_confidence or 0.0),
+        "detected_at": utc_iso(),
+        "barrier_ids": barrier_ids,
+        "barrier_associated": bool(barrier_ids),
+        "barrier_command_attempted": bool(barrier_command_attempted),
+        "barrier_command_sent": bool(barrier_command_attempted and barrier_ids),
+        "image": image_to_base64(img),
+    }
+    try:
+        r = requests.post(AUTOMATION_CALLBACK_URL, json=data, timeout=3)
+        print(f"[{time.strftime('%H:%M:%S')}] [{camera_name}] Automatizacion ANPR: {texto} ({r.status_code})")
+    except Exception as e:
+        print(f"[{time.strftime('%H:%M:%S')}] [{camera_name}] ERROR automatizacion ANPR: {e}")
 
 def verificar_placa(placa):
     """Verifica si la placa está en la base de datos de residentes"""
@@ -630,15 +699,19 @@ def procesar_frames(camera_name, stop_flag):
                                     #print(f"[{camera_name}] Placa detectada: {texto_detectado}")
 
                                     # --- APERTURA AUTOMÁTICA ---
-                                    if verificar_placa(texto_detectado):
+                                    vehicle_access_match = verificar_placa(texto_detectado)
+                                    barrier_command_attempted = False
+                                    if vehicle_access_match:
                                         print(f"[{camera_name}] !!! RESIDENTE DETECTADO: {texto_detectado} !!!")
                                         registrar_movimiento(texto_detectado, camera_name, frame)
+                                        barrier_command_attempted = True
                                         threading.Thread(target=abrir_barreras, args=(camera_name,), daemon=True).start()
                                     else:
                                         pid, uid_mov = verificar_preautorizado(texto_detectado)
                                         if pid is not None:
                                             print(f"[{camera_name}] !!! PREAUTORIZADO DETECTADO: {texto_detectado} | Mov {uid_mov} !!!")
                                             registrar_ingreso_preautorizado(texto_detectado, camera_name, frame, pid, uid_mov)
+                                            barrier_command_attempted = True
                                             threading.Thread(target=abrir_barreras, args=(camera_name,), daemon=True).start()
                                         else:
                                             # Solo en cámaras de SALIDA: verificar exento de estacionamiento
@@ -649,6 +722,7 @@ def procesar_frames(camera_name, stop_flag):
                                                 if eid is not None:
                                                     print(f"[{camera_name}] !!! EXENTO ESTACIONAMIENTO: {texto_detectado} | Reserva {id_mov_reserva} !!!")
                                                     registrar_salida_exento(texto_detectado, camera_name, frame, eid, id_mov_reserva)
+                                                    barrier_command_attempted = True
                                                     threading.Thread(target=abrir_barreras, args=(camera_name,), daemon=True).start()
                                                 else:
                                                     inv_data = verificar_inventario_estacionamiento(texto_detectado)
@@ -656,8 +730,9 @@ def procesar_frames(camera_name, stop_flag):
                                                         inv_id, uid_res, id_wallet, b_wallet, t_pagar, p_reserva, p_servicio = inv_data
                                                         print(f"[{camera_name}] !!! COBRO INVENTARIO: {texto_detectado} | Reserva {uid_res} !!!")
                                                         registrar_cobro_inventario(texto_detectado, camera_name, frame, inv_id, uid_res, id_wallet, b_wallet, t_pagar, p_reserva)
+                                                        barrier_command_attempted = True
                                                         threading.Thread(target=abrir_barreras, args=(camera_name,), daemon=True).start()
-                                     # ---------------------------
+                                    # ---------------------------
 
                                     # 2. Buscar tipo de vehículo (que contenga la placa)
                                     vehiculo_results = vehiculo_model.predict(frame, verbose=False)
@@ -710,6 +785,12 @@ def procesar_frames(camera_name, stop_flag):
                                     else:
                                         imagen_a_enviar = imagen_vehiculo if imagen_vehiculo is not None else frame
                                         enviar_datos(imagen_a_enviar, texto_detectado, camera_name, clase)
+                                        if vehicle_access_match and vehicle_automation_enabled(config):
+                                            threading.Thread(
+                                                target=notify_vehicle_automation,
+                                                args=(imagen_a_enviar, texto_detectado, camera_name, clase, vconf_val, config, barrier_command_attempted),
+                                                daemon=True
+                                            ).start()
                             else:
                                 invalid_read_count += 1
                                 publicar_estado_anpr(

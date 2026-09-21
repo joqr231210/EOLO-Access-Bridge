@@ -10,11 +10,14 @@ Servicio local para operar accesos EOLO desde una LAN. Incluye panel de operador
 - Seccion `Peatones` para administrar dispositivos locales de reconocimiento facial y permisos peatonales descargados desde EOLO Cloud.
 - Soporte multi-dispositivo para lectores faciales `Hikvision Mini Moe` y `Dahua ASI`, cada uno con configuracion, prueba de comunicacion, carga de usuarios y escucha de eventos.
 - Seccion `Vehiculos` para camaras ANPR, permisos vehiculares, estado de API ANPR, streams RTSP activos y ajustes del procesador ANPR.
+- Seccion `Carriles` para modelar carriles vehiculares, peatonales o mixtos, vincular sus dispositivos locales y enviar apertura manual a la primera barrera asociada.
 - Seccion `Puertas y Barreras` para configurar barreras/puertas locales. El tipo disponible por ahora es `Hikvision ISAPI`.
 - Seccion `Visualizador RTC` para revisar el servicio de visualizacion en tiempo real.
-- Seccion `Lectura de Identificaciones` para elegir camara local y configurar OpenAI Vision para extraer datos de una identificacion. La API key efectiva se resuelve por acceso activo (`Acceso.AuxKey1`) y cae a la key local si el acceso no tiene valor.
+- Seccion `Lectura de Identificaciones` para elegir camara local y configurar OpenAI Vision para extraer datos de una identificacion. Incluye el ajuste persistente de campo de vision y una vista de prueba de camara bajo demanda. La API key efectiva se resuelve por acceso activo (`Acceso.AuxKey1`) y cae a la key local si el acceso no tiene valor.
+- Seccion `Automatizaciones` para habilitar eventos locales y movimientos cloud de vehiculos detectados por ANPR, respetando los filtros ANPR de la camara y su direccion de entrada/salida.
 - Seccion `Sincronizacion` con tabs `Cloud`, `Permisos` y `Dispositivos`.
 - Descarga de `PermisoAccesos` via Bubble Data API para el acceso activo, filtrando desde Cloud por `VigenciaFinal` futura y despues localmente por tipo de entidad.
+- Sincronizacion de permisos vehiculares vigentes hacia la tabla local ANPR: incorpora placas activas y elimina las que ya no existen en el snapshot de permisos.
 - Snapshot local de permisos en `data/operator-access-permissions.json`.
 - Snapshot para carga a dispositivos faciales en `data/eolo-users-snapshot.json`, generado desde permisos peatonales activos.
 - Logs persistidos en `data/logs.jsonl`, consultables desde `/settings > Logs`; al hacer clic en el ultimo log se abre su detalle.
@@ -192,6 +195,8 @@ La lectura de identificaciones usa OpenAI Vision con prioridad por acceso:
 2. si `AuxKey1` esta vacio, Bridge usa la API key local guardada en Ajustes;
 3. `/settings > Lectura de Identificaciones` muestra si la key efectiva viene de `Acceso` o de `Local`.
 
+El campo de vision se guarda en la configuracion local del Bridge como `openaiVision.cameraZoomPercent` (100-220) y se replica en el navegador para que el dialogo de captura de identificaciones use el mismo encuadre. En Ajustes, `Probar Camara` abre el stream solo durante la validacion; `Detener camara`, salir de la seccion o cerrar la pagina liberan sus tracks.
+
 ## API principal
 
 Salud, servicios y configuracion:
@@ -202,6 +207,9 @@ Salud, servicios y configuracion:
 - `GET /api/device-config`
 - `PUT /api/device-config`
 - `POST /api/device-config/test`
+- `GET|POST /api/lanes`
+- `PUT|DELETE /api/lanes/:id`
+- `GET|PUT /api/automations`
 
 Dispositivos faciales y empleados:
 

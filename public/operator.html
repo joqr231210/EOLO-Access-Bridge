@@ -608,6 +608,11 @@
                 Fuente
                 <select id="cameraSelect"></select>
               </label>
+              <label class="range-field">
+                <span>Campo de visión <strong id="cameraZoomValue">100%</strong></span>
+                <input id="cameraZoomRange" type="range" min="100" max="220" step="5" value="100" />
+                <small>Sube el valor para acercar la identificación cuando la cámara queda lejos.</small>
+              </label>
               <div class="camera-preview">
                 <video id="settingsCameraPreview" autoplay playsinline muted></video>
                 <span id="settingsCameraEmpty">Selecciona una cámara para probarla.</span>
@@ -616,6 +621,7 @@
                 <button class="ghost" type="button" id="refreshCamerasBtn">Actualizar cámaras</button>
                 <button class="ghost" type="button" id="testCameraBtn">Probar</button>
                 <button class="ghost" type="button" id="stopSettingsCameraBtn">Detener</button>
+                <button class="primary" type="button" id="saveCameraZoomBtn">Guardar campo</button>
               </div>
             </article>
             <article class="settings-card" data-settings-section="camera">

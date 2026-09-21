@@ -8,6 +8,9 @@ services:
         condition: service_healthy
     ports:
       - "${HOST_PORT:-8080}:${PORT:-8080}"
+      - "${ANPR_WEBRTC_HOST_PORT:-1984}:1984"
+      - "${ANPR_WEBRTC_MEDIA_HOST_PORT:-8555}:${ANPR_WEBRTC_MEDIA_HOST_PORT:-8555}"
+      - "${ANPR_WEBRTC_MEDIA_HOST_PORT:-8555}:${ANPR_WEBRTC_MEDIA_HOST_PORT:-8555}/udp"
     env_file:
       - path: .env
         required: false
@@ -17,6 +20,11 @@ services:
       DATA_DIR: /app/data
       UPLOAD_DIR: /app/uploads
       ANPR_API_BASE_URL: http://anpr-api:8090
+      ANPR_WEBRTC_API_URL: http://127.0.0.1:1984
+      ANPR_WEBRTC_PUBLIC_URL: ${ANPR_WEBRTC_PUBLIC_URL:-http://localhost:${ANPR_WEBRTC_HOST_PORT:-1984}}
+      ANPR_WEBRTC_ICE_HOST: ${ANPR_WEBRTC_ICE_HOST:-localhost}
+      ANPR_WEBRTC_PORT: ${ANPR_WEBRTC_MEDIA_HOST_PORT:-8555}
+      GO2RTC_BINARY: /usr/local/bin/go2rtc
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads
@@ -46,6 +54,7 @@ services:
       ANPR_API_PORT: 8090
       PORT: 8090
       ANPR_CONTROL_BASE_URL: http://127.0.0.1:8090
+      ANPR_AUTOMATION_CALLBACK_URL: http://eolo-access-bridge:8080/api/anpr/automation-event
       ANPR_DB_FILE: /app/data/plates.db
       ANPR_CONFIG_FILE: /app/data/config.json
       ANPR_DETECTIONS_FILE: /app/data/anpr-detections.json

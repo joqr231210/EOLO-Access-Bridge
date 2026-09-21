@@ -44,6 +44,7 @@ const state = {
   operatorIdentificationMessage: '',
   operatorCameras: [],
   selectedOperatorCameraId: localStorage.getItem('eolo.operator.cameraId') || '',
+  identificationCameraPreviewStream: null,
   operatorCloudConfig: null,
   operatorCloudLoaded: false,
   operatorCloudLoading: false,
@@ -55,6 +56,18 @@ const state = {
   operatorBridgeError: '',
   operatorBridgeMessage: '',
   operatorBridgeLastResult: null,
+  lanes: [],
+  activeLaneFilter: 'all',
+  selectedLaneId: '',
+  laneMessage: '',
+  laneError: '',
+  laneLoading: false,
+  activeAutomationTab: 'vehicles',
+  automationSettings: null,
+  automationLoaded: false,
+  automationLoading: false,
+  automationError: '',
+  automationMessage: '',
   activeSyncTab: 'cloud',
   syncPermissions: [],
   syncPermissionsSource: '',
@@ -114,12 +127,14 @@ const logList = $('#logList');
 
 const serviceTabs = [
   { id: 'bridge-settings', label: 'Ajustes Bridge', title: 'Ajustes Bridge' },
+  { id: 'lanes', label: 'Carriles', title: 'Carriles' },
   { id: 'pedestrians', label: 'Peatones', title: 'Peatones' },
   { id: 'vehicles', label: 'Vehiculos', title: 'Vehiculos' },
   { id: 'barriers', label: 'Puertas y Barreras', title: 'Puertas y Barreras' },
   { id: 'webrtc-preview', label: 'Visualizador RTC', title: 'Visualizador RTC' },
   { id: 'identification-reader', label: 'Lectura de Identificaciones', title: 'Lectura de Identificaciones' },
   { id: 'cloud-sync', label: 'Sincronizacion', title: 'Sincronizacion' },
+  { id: 'automations', label: 'Automatizaciones', title: 'Automatizaciones' },
   { id: 'logs', label: 'Logs', title: 'Logs' }
 ];
 
@@ -393,6 +408,8 @@ async function refreshHealth() {
   ]);
   state.health = health;
   state.deviceConfig = configPayload;
+  state.automationSettings = configPayload.automations || state.automationSettings;
+  state.lanes = Array.isArray(configPayload.lanes) ? configPayload.lanes : state.lanes;
   setManagedFaceDevices(faceDevicesPayload.devices || configPayload.faceDevices || []);
   state.deviceCommunicationOk = updateOperationalStatus(health, configPayload, info);
   updateStreamToggle(health);
@@ -411,6 +428,8 @@ async function refreshSyncStatus() {
   ]);
   state.health = health;
   state.deviceConfig = configPayload;
+  state.automationSettings = configPayload.automations || state.automationSettings;
+  state.lanes = Array.isArray(configPayload.lanes) ? configPayload.lanes : state.lanes;
   setManagedFaceDevices(faceDevicesPayload.devices || configPayload.faceDevices || []);
   updateStreamToggle(health);
   fillDeviceConfigForm(configPayload);
@@ -573,13 +592,17 @@ function updateStreamToggle(health = state.health) {
 }
 
 async function loadServices() {
-  const [payload, anprDashboard, anprHardware, faceDevicesPayload] = await Promise.all([
+  const [payload, anprDashboard, anprHardware, faceDevicesPayload, lanesPayload] = await Promise.all([
     api('/api/services'),
     api('/api/anpr/dashboard').catch((error) => ({ ok: false, error: error.message })),
     api('/api/anpr/hardware').catch((error) => ({ ok: false, error: error.message })),
-    api('/api/face-devices').catch(() => ({ devices: [] }))
+    api('/api/face-devices').catch(() => ({ devices: [] })),
+    api('/api/lanes').catch((error) => ({ ok: false, error: error.message, lanes: [] }))
   ]);
   state.services = payload.services || [];
+  if (lanesPayload.ok !== false || Array.isArray(lanesPayload.lanes)) {
+    state.lanes = lanesPayload.lanes || [];
+  }
   setManagedFaceDevices(faceDevicesPayload.devices || []);
   state.anprDashboardError = anprDashboard.ok === false ? anprDashboard.error : null;
   state.anprDashboard = anprDashboard.ok === false ? null : anprDashboard;
@@ -615,12 +638,14 @@ function renderServices() {
   if (!grid) return;
   const customServiceView = [
     'bridge-settings',
+    'lanes',
     'pedestrians',
     'vehicles',
     'barriers',
     'webrtc-preview',
     'identification-reader',
     'cloud-sync',
+    'automations',
     'logs'
   ].includes(state.activeServiceTab);
   grid.hidden = customServiceView;
@@ -727,12 +752,15 @@ function renderServiceTabs() {
 function renderServiceDetail() {
   const detail = $('#serviceDetail');
   if (!detail) return;
+  // The settings preview is intentionally short-lived so it never keeps a local camera busy.
+  stopIdentificationCameraPreview();
   parkEmployeeWorkspace();
   parkTechnicalSettingsLayout();
   const tab = serviceTabs.find((item) => item.id === state.activeServiceTab) || serviceTabs[0];
   const service = serviceById(tab.id);
   const renderers = {
     'bridge-settings': renderBridgeSettingsServiceView,
+    lanes: renderLanesServiceView,
     pedestrians: renderPedestriansServiceView,
     vehicles: renderVehiclesServiceView,
     'hikvision-events': renderHikvisionServiceView,
@@ -746,18 +774,21 @@ function renderServiceDetail() {
     'webrtc-preview': renderWebrtcPreviewServiceView,
     'identification-reader': renderIdentificationReaderServiceView,
     'cloud-sync': renderCloudSyncServiceView,
+    automations: renderAutomationsServiceView,
     logs: renderLogsServiceView,
     'visit-sync': renderVisitSyncServiceView
   };
   const body = (renderers[tab.id] || renderEmptyServiceView)(service);
   const customHeader = [
     'bridge-settings',
+    'lanes',
     'pedestrians',
     'vehicles',
     'barriers',
     'webrtc-preview',
     'identification-reader',
     'cloud-sync',
+    'automations',
     'logs'
   ].includes(tab.id);
   detail.innerHTML = customHeader
@@ -784,6 +815,7 @@ function renderServiceDetail() {
   maybeLoadVehiclePermissions();
   maybeLoadIdentificationReaderSettings();
   maybeLoadCloudSyncSettings();
+  maybeLoadAutomations();
   maybeLoadBridgeSettings();
   maybeLoadSyncPermissions();
   maybeLoadSettingsLogs();
@@ -987,6 +1019,455 @@ function activeVehicleRtspCount() {
   const running = serviceIsRunning('anpr-processor') || Boolean(anprService('anpr-processor').running);
   if (!running) return 0;
   return vehicleCameras().filter(cameraHasRtsp).length;
+}
+
+function laneList() {
+  return Array.isArray(state.lanes) ? state.lanes : [];
+}
+
+function selectedLane() {
+  if (state.selectedLaneId === 'new') return emptyLane();
+  return laneList().find((lane) => lane.id === state.selectedLaneId) || null;
+}
+
+function emptyLane() {
+  const access = pedestrianAccessContext();
+  return {
+    id: 'new',
+    code: nextLaneCode(),
+    name: '',
+    kind: 'vehicular',
+    direction: 'entrada',
+    enabled: true,
+    automatic: true,
+    rule: '',
+    accessId: access.id || '',
+    accessName: access.name || '',
+    controlPointId: '',
+    controlPointName: '',
+    barrierTimeSeconds: 6,
+    flowToday: 0,
+    availabilityPercent: 99.8,
+    devices: {
+      cameras: [],
+      barriers: [],
+      biometricReaders: [],
+      presenceSensors: [],
+      displays: [],
+      relays: [],
+      turnstiles: [],
+      doors: []
+    },
+    notes: ''
+  };
+}
+
+function nextLaneCode() {
+  const next = laneList().length + 1;
+  return `C-${String(next).padStart(2, '0')}`;
+}
+
+function laneKindLabel(kind = 'vehicular') {
+  if (kind === 'peatonal') return 'Peatonal';
+  if (kind === 'mixto') return 'Mixto';
+  return 'Vehicular';
+}
+
+function laneDirectionLabel(direction = 'entrada') {
+  if (direction === 'salida') return 'Salida';
+  if (direction === 'ambos') return 'Bidireccional';
+  return 'Entrada';
+}
+
+function laneFilteredList() {
+  const filter = state.activeLaneFilter || 'all';
+  if (filter === 'vehicular') return laneList().filter((lane) => lane.kind === 'vehicular' || lane.kind === 'mixto');
+  if (filter === 'peatonal') return laneList().filter((lane) => lane.kind === 'peatonal' || lane.kind === 'mixto');
+  return laneList();
+}
+
+function laneDeviceCount(lane = {}) {
+  return Object.values(lane.devices || {}).reduce((count, value) => count + (Array.isArray(value) ? value.length : 0), 0);
+}
+
+function laneDeviceOptions() {
+  return {
+    cameras: vehicleCameras().map((camera, index) => ({
+      id: camera.name || camera.id || `camera-${index}`,
+      label: camera.name || `Camara ${index + 1}`,
+      detail: camera.type || maskRtspForUi(camera.rtsp || camera.rtsp_url || '')
+    })),
+    barriers: barrierDevices().map((barrier, index) => ({
+      id: barrierId(barrier) || `barrier-${index}`,
+      label: barrier.nombre || barrier.name || barrierId(barrier) || `Barrera ${index + 1}`,
+      detail: barrierTypeLabel(barrier.type)
+    })),
+    biometricReaders: (state.faceDevices || []).map((device) => ({
+      id: device.id,
+      label: device.name || device.bridgeIdentifier || device.id,
+      detail: `${device.type || 'lector'} ${device.host || ''}`.trim()
+    }))
+  };
+}
+
+function laneDeviceLabel(kind, id) {
+  const options = laneDeviceOptions()[kind] || [];
+  const found = options.find((option) => option.id === id);
+  return found?.label || id;
+}
+
+function laneTopologyItems(lane = {}) {
+  const devices = lane.devices || {};
+  const items = [
+    { kind: 'flow', label: `Flujo ${laneDirectionLabel(lane.direction)}`, detail: lane.kind === 'peatonal' ? 'Peatonal' : 'Vehicular' }
+  ];
+  devices.presenceSensors?.forEach((id) => items.push({ kind: 'sensor', label: id, detail: 'Sensor presencia' }));
+  devices.cameras?.forEach((id) => items.push({ kind: 'camera', label: laneDeviceLabel('cameras', id), detail: 'Camara ANPR/IP' }));
+  devices.biometricReaders?.forEach((id) => items.push({ kind: 'reader', label: laneDeviceLabel('biometricReaders', id), detail: 'Lector biometrico' }));
+  devices.displays?.forEach((id) => items.push({ kind: 'display', label: id, detail: 'Display/VMS' }));
+  devices.relays?.forEach((id) => items.push({ kind: 'relay', label: id, detail: 'Relevador' }));
+  devices.turnstiles?.forEach((id) => items.push({ kind: 'turnstile', label: id, detail: 'Torniquete' }));
+  devices.doors?.forEach((id) => items.push({ kind: 'door', label: id, detail: 'Puerta' }));
+  devices.barriers?.forEach((id) => items.push({ kind: 'barrier', label: laneDeviceLabel('barriers', id), detail: 'Pluma/Barrera' }));
+  return items;
+}
+
+function renderLanesServiceView() {
+  const lane = selectedLane();
+  return lane ? renderLaneDetailView(lane) : renderLaneListView();
+}
+
+function renderLaneListView() {
+  const lanes = laneFilteredList();
+  const all = laneList();
+  const activeCount = all.filter((lane) => lane.enabled).length;
+  const avgAvailability = all.length
+    ? (all.reduce((sum, lane) => sum + Number(lane.availabilityPercent || 0), 0) / all.length).toFixed(1)
+    : '0.0';
+  const flow = all.reduce((sum, lane) => sum + Number(lane.flowToday || 0), 0);
+  return `
+    <section class="lanes-shell">
+      <div class="service-detail-header lanes-main-header">
+        <div>
+          <h3>Configuracion de Carriles y Hardware</h3>
+          <p>Supervisa y configura la logica operativa de carriles vehiculares y peatonales, dispositivos vinculados y acciones locales.</p>
+        </div>
+        <button type="button" class="primary-button" data-lane-new>Agregar Carril</button>
+      </div>
+
+      <section class="service-section lanes-access-summary">
+        <div>
+          <h4>${escapeHtml(pedestrianAccessContext().name || state.deviceConfig?.eolo?.access || 'Punto de Control')}</h4>
+          <p>${escapeHtml(state.deviceConfig?.operator?.serialNumber || 'Bridge local')}</p>
+        </div>
+        ${renderMetrics([
+          { label: 'Disponibilidad', value: `${avgAvailability}%` },
+          { label: 'Carriles activos', value: `${activeCount}/${all.length}` },
+          { label: 'Alertas', value: '0' },
+          { label: 'Flujo del dia', value: flow }
+        ])}
+      </section>
+
+      <div class="service-inner-tabs lanes-tabs" role="tablist" aria-label="Filtro de carriles">
+        ${renderLaneFilterButton('all', `Todos (${all.length})`)}
+        ${renderLaneFilterButton('vehicular', `Vehiculares (${all.filter((lane) => lane.kind === 'vehicular' || lane.kind === 'mixto').length})`)}
+        ${renderLaneFilterButton('peatonal', `Peatonales (${all.filter((lane) => lane.kind === 'peatonal' || lane.kind === 'mixto').length})`)}
+      </div>
+
+      ${state.laneMessage ? `<div class="service-warning success">${escapeHtml(state.laneMessage)}</div>` : ''}
+      ${state.laneError ? `<div class="service-warning">${escapeHtml(state.laneError)}</div>` : ''}
+
+      <div class="lane-list">
+        ${lanes.length ? lanes.map(renderLaneCard).join('') : '<div class="empty-state compact">Sin carriles registrados para este filtro.</div>'}
+      </div>
+    </section>
+  `;
+}
+
+function renderLaneFilterButton(filter, label) {
+  const active = (state.activeLaneFilter || 'all') === filter;
+  return `
+    <button type="button" class="service-inner-tab ${active ? 'active' : ''}" data-lane-filter="${escapeAttr(filter)}" aria-selected="${active}">
+      ${escapeHtml(label)}
+    </button>
+  `;
+}
+
+function renderLaneCard(lane) {
+  const subtitle = [
+    laneDirectionLabel(lane.direction),
+    laneKindLabel(lane.kind),
+    lane.rule ? `Regla: ${lane.rule}` : '',
+    lane.controlPointName || ''
+  ].filter(Boolean).join(' · ');
+  return `
+    <article class="lane-card ${lane.enabled ? 'active' : 'inactive'}">
+      <div class="lane-card-header">
+        <div>
+          <h4>${escapeHtml(lane.code ? `${lane.code} · ${lane.name}` : lane.name)}</h4>
+          <p>${escapeHtml(subtitle)}</p>
+        </div>
+        <div class="lane-card-actions">
+          ${renderStateLed(lane.enabled, lane.enabled ? 'Activo' : 'Inactivo')}
+          ${lane.automatic ? '<span class="lane-badge">Automatico</span>' : '<span class="lane-badge idle">Manual</span>'}
+          <button type="button" data-lane-detail="${escapeAttr(lane.id)}">Parametros</button>
+          <button type="button" class="danger" data-lane-open="${escapeAttr(lane.id)}">${lane.kind === 'peatonal' ? 'Liberar' : 'Abrir manual'}</button>
+        </div>
+      </div>
+      ${renderLaneTopologyStrip(lane, { compact: true })}
+    </article>
+  `;
+}
+
+function renderLaneTopologyStrip(lane = {}, options = {}) {
+  const items = laneTopologyItems(lane);
+  return `
+    <div class="lane-topology-strip ${options.compact ? 'compact' : ''}">
+      ${items.map((item, index) => `
+        <div class="lane-node ${escapeAttr(item.kind)}">
+          <span>${escapeHtml(index + 1)}</span>
+          <strong>${escapeHtml(item.label)}</strong>
+          <small>${escapeHtml(item.detail)}</small>
+        </div>
+      `).join('<i class="lane-link" aria-hidden="true"></i>')}
+    </div>
+  `;
+}
+
+function renderLaneDetailView(lane) {
+  const isNew = lane.id === 'new';
+  const metrics = [
+    { label: 'Estado operativo', value: lane.automatic ? 'Automatico' : 'Manual' },
+    { label: 'Modo de apertura', value: lane.rule || defaultLaneRule(lane) },
+    { label: 'Dispositivos vinculados', value: laneDeviceCount(lane) },
+    { label: 'Tiempo de barrera', value: `${Number(lane.barrierTimeSeconds || 6).toFixed(1)}s` },
+    { label: 'Flujo del dia', value: lane.flowToday || 0 }
+  ];
+  return `
+    <section class="lanes-shell lane-detail-shell">
+      <div class="service-detail-header lanes-main-header">
+        <button type="button" class="icon-button chevron-back-button" data-lane-back aria-label="Regresar a carriles">
+          <span aria-hidden="true">‹</span>
+        </button>
+        <div>
+          <h3>${escapeHtml(isNew ? 'Nuevo Carril' : `${lane.code || 'Carril'} · ${lane.name}`)}</h3>
+          <p>${escapeHtml(isNew ? 'Define el carril fisico y sus dispositivos vinculados.' : 'Detalle del carril y topologia local.')}</p>
+        </div>
+        <div class="lane-card-actions">
+          ${renderStateLed(lane.enabled, lane.enabled ? 'Activo' : 'Inactivo')}
+          ${!isNew ? `<button type="button" class="danger" data-lane-open="${escapeAttr(lane.id)}">${lane.kind === 'peatonal' ? 'Liberar' : 'Abrir manual'}</button>` : ''}
+        </div>
+      </div>
+
+      ${renderMetrics(metrics)}
+
+      <section class="service-section wide">
+        <div class="service-section-heading">
+          <div>
+            <h4>Topologia Fisica</h4>
+            <p>Representacion ordenada del flujo y sus perifericos vinculados.</p>
+          </div>
+          ${renderStateLed(Boolean(lane.enabled), lane.enabled ? 'Carril activo' : 'Carril inactivo')}
+        </div>
+        ${renderLaneTopologyStrip(lane)}
+      </section>
+
+      <section class="service-section wide">
+        <div class="service-section-heading">
+          <div>
+            <h4>${isNew ? 'Configurar Carril' : 'Editar Carril'}</h4>
+            <p>Los dispositivos se referencian; su configuracion tecnica permanece en sus secciones actuales.</p>
+          </div>
+        </div>
+        ${renderLaneForm(lane)}
+      </section>
+
+      <section class="service-section wide">
+        <div class="service-section-heading">
+          <div>
+            <h4>Dispositivos Vinculados al ${escapeHtml(lane.code || 'Carril')}</h4>
+            <p>Resumen operativo de camaras, lectores, barreras y perifericos locales.</p>
+          </div>
+          <span class="status-pill idle">${laneDeviceCount(lane)} perifericos</span>
+        </div>
+        <div class="lane-device-grid">
+          ${renderLaneDeviceCards(lane)}
+        </div>
+      </section>
+
+      <section class="service-section wide">
+        <div class="service-section-heading">
+          <div>
+            <h4>Consola de Auditoria y Eventos</h4>
+            <p>Eventos locales inferidos para validar la composicion del carril.</p>
+          </div>
+          <span class="status-pill ok">Local</span>
+        </div>
+        ${renderLaneAuditTable(lane)}
+      </section>
+    </section>
+  `;
+}
+
+function defaultLaneRule(lane = {}) {
+  if (lane.kind === 'peatonal') return 'Biometrico / QR';
+  if ((lane.devices?.biometricReaders || []).length) return 'ANPR + lector';
+  return 'LPR ANPR';
+}
+
+function renderLaneForm(lane) {
+  const options = laneDeviceOptions();
+  return `
+    <form id="laneForm" class="hardware-form lane-form" data-lane-form-id="${escapeAttr(lane.id)}">
+      <div class="form-grid lane-form-grid">
+        <label>
+          Nombre del carril
+          <input name="name" value="${escapeAttr(lane.name || '')}" placeholder="Entrada Norte" required />
+        </label>
+        <label>
+          Codigo
+          <input name="code" value="${escapeAttr(lane.code || '')}" placeholder="V-01" />
+        </label>
+        <label>
+          Tipo
+          <select name="kind">
+            <option value="vehicular" ${lane.kind === 'vehicular' ? 'selected' : ''}>Vehicular</option>
+            <option value="peatonal" ${lane.kind === 'peatonal' ? 'selected' : ''}>Peatonal</option>
+            <option value="mixto" ${lane.kind === 'mixto' ? 'selected' : ''}>Mixto</option>
+          </select>
+        </label>
+        <label>
+          Direccion
+          <select name="direction">
+            <option value="entrada" ${lane.direction === 'entrada' ? 'selected' : ''}>Entrada</option>
+            <option value="salida" ${lane.direction === 'salida' ? 'selected' : ''}>Salida</option>
+            <option value="ambos" ${lane.direction === 'ambos' ? 'selected' : ''}>Bidireccional</option>
+          </select>
+        </label>
+        <label>
+          Regla operativa
+          <input name="rule" value="${escapeAttr(lane.rule || '')}" placeholder="LPR + convalidacion TAG" />
+        </label>
+        <label>
+          Punto de control
+          <input name="controlPointName" value="${escapeAttr(lane.controlPointName || '')}" placeholder="Entrada Principal" />
+        </label>
+        <label>
+          ID punto de control
+          <input name="controlPointId" value="${escapeAttr(lane.controlPointId || '')}" placeholder="1764..." />
+        </label>
+        <label>
+          ID acceso
+          <input name="accessId" value="${escapeAttr(lane.accessId || pedestrianAccessContext().id || '')}" placeholder="1754..." />
+        </label>
+        <label>
+          Tiempo barrera (s)
+          <input name="barrierTimeSeconds" type="number" min="1" max="120" step="1" value="${escapeAttr(lane.barrierTimeSeconds || 6)}" />
+        </label>
+        <label>
+          Flujo del dia
+          <input name="flowToday" type="number" min="0" step="1" value="${escapeAttr(lane.flowToday || 0)}" />
+        </label>
+        <label>
+          Disponibilidad (%)
+          <input name="availabilityPercent" type="number" min="0" max="100" step="0.1" value="${escapeAttr(lane.availabilityPercent || 99.8)}" />
+        </label>
+        <label class="check-row">
+          <input name="enabled" type="checkbox" ${lane.enabled ? 'checked' : ''} />
+          <span>Carril activo</span>
+        </label>
+        <label class="check-row">
+          <input name="automatic" type="checkbox" ${lane.automatic ? 'checked' : ''} />
+          <span>Operacion automatica</span>
+        </label>
+        <label class="wide-field">
+          Notas
+          <input name="notes" value="${escapeAttr(lane.notes || '')}" placeholder="Observaciones operativas" />
+        </label>
+      </div>
+      <div class="lane-device-picker">
+        ${renderLaneCheckboxGroup('Camaras vehiculares/IP', 'cameras', options.cameras, lane.devices?.cameras || [])}
+        ${renderLaneCheckboxGroup('Barreras / puertas', 'barriers', options.barriers, lane.devices?.barriers || [])}
+        ${renderLaneCheckboxGroup('Lectores biometricos', 'biometricReaders', options.biometricReaders, lane.devices?.biometricReaders || [])}
+        ${renderLaneTextListField('Sensores de presencia', 'presenceSensors', lane.devices?.presenceSensors || [], 'Lazo inductivo, sensor IR')}
+        ${renderLaneTextListField('Displays / semaforos', 'displays', lane.devices?.displays || [], 'Display VMS, semaforo LED')}
+        ${renderLaneTextListField('Relevadores', 'relays', lane.devices?.relays || [], 'DO-01, modulo relay')}
+        ${renderLaneTextListField('Torniquetes', 'turnstiles', lane.devices?.turnstiles || [], 'Torniquete lobby')}
+        ${renderLaneTextListField('Puertas', 'doors', lane.devices?.doors || [], 'Puerta cristal norte')}
+      </div>
+      <div class="form-actions">
+        <button type="button" data-lane-back>Cancelar</button>
+        ${lane.id === 'new' ? '' : `<button type="button" class="danger" data-lane-delete="${escapeAttr(lane.id)}">Eliminar carril</button>`}
+        <button type="submit" class="primary-button" ${state.laneLoading ? 'disabled' : ''}>Guardar carril</button>
+      </div>
+      ${state.laneMessage ? `<div class="service-warning success">${escapeHtml(state.laneMessage)}</div>` : ''}
+      ${state.laneError ? `<div class="service-warning">${escapeHtml(state.laneError)}</div>` : ''}
+    </form>
+  `;
+}
+
+function renderLaneCheckboxGroup(title, name, options = [], selected = []) {
+  const selectedSet = new Set(selected);
+  return `
+    <fieldset class="lane-device-group">
+      <legend>${escapeHtml(title)}</legend>
+      ${options.length
+        ? options.map((option) => `
+          <label class="barrier-checkbox">
+            <input type="checkbox" name="${escapeAttr(name)}" value="${escapeAttr(option.id)}" ${selectedSet.has(option.id) ? 'checked' : ''} />
+            <span><strong>${escapeHtml(option.label)}</strong>${option.detail ? `<small>${escapeHtml(option.detail)}</small>` : ''}</span>
+          </label>
+        `).join('')
+        : '<span class="muted-inline">Sin dispositivos registrados en su seccion correspondiente.</span>'}
+    </fieldset>
+  `;
+}
+
+function renderLaneTextListField(title, name, selected = [], placeholder = '') {
+  return `
+    <label class="lane-device-group">
+      <span>${escapeHtml(title)}</span>
+      <input name="${escapeAttr(name)}" value="${escapeAttr(selected.join(', '))}" placeholder="${escapeAttr(placeholder)}" />
+      <small>Separa multiples valores con coma.</small>
+    </label>
+  `;
+}
+
+function renderLaneDeviceCards(lane = {}) {
+  const items = laneTopologyItems(lane).filter((item) => item.kind !== 'flow');
+  if (!items.length) {
+    return '<div class="empty-state compact">Este carril aun no tiene dispositivos vinculados.</div>';
+  }
+  return items.map((item) => `
+    <article class="lane-device-card">
+      <div>
+        <strong>${escapeHtml(item.label)}</strong>
+        <span>${escapeHtml(item.detail)}</span>
+      </div>
+      ${renderStateLed(true, 'Vinculado')}
+    </article>
+  `).join('');
+}
+
+function renderLaneAuditTable(lane = {}) {
+  const rows = laneTopologyItems(lane).filter((item) => item.kind !== 'flow').map((item, index) => ({
+    time: new Date(Date.now() - index * 65000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    type: item.kind,
+    origin: item.label,
+    message: `${item.detail} vinculado a ${lane.name || 'carril local'}`,
+    result: lane.enabled ? 'OK' : 'Inactivo'
+  }));
+  return renderTable(
+    [
+      { label: 'Timestamp', value: 'time' },
+      { label: 'Tipo', value: 'type' },
+      { label: 'Dispositivo origen', value: 'origin' },
+      { label: 'Mensaje', value: 'message' },
+      { label: 'Resultado', value: 'result' }
+    ],
+    rows,
+    'Sin eventos locales para este carril.'
+  );
 }
 
 function anprApiIsRunning() {
@@ -1307,7 +1788,12 @@ function renderVehicleCamerasTable(cameras = []) {
               <td>${escapeHtml(camera.prefix || '-')}</td>
               <td>${renderStateLed(cameraHasBarrier(camera, barriers), cameraHasBarrier(camera, barriers) ? 'Asociada' : 'Sin barrera')}</td>
               <td>${renderStateLed(processorRunning && cameraHasRtsp(camera), processorRunning && cameraHasRtsp(camera) ? 'Activa' : 'Detenida')}</td>
-              <td><button type="button" data-vehicle-camera-edit="${index}">Editar</button></td>
+              <td>
+                <div class="inline-actions compact-actions">
+                  <button type="button" data-vehicle-camera-edit="${index}">Editar</button>
+                  <button type="button" class="danger" data-vehicle-camera-delete="${index}">Eliminar</button>
+                </div>
+              </td>
             </tr>
           `).join('')}
         </tbody>
@@ -1365,6 +1851,7 @@ function renderVehicleCameraEditor(camera = emptyCamera()) {
       </div>
       <div class="form-actions">
         <button type="button" data-vehicle-camera-back>Cancelar</button>
+        ${state.selectedVehicleCameraIndex === 'new' ? '' : `<button type="button" class="danger" data-vehicle-camera-delete="${escapeAttr(state.selectedVehicleCameraIndex)}">Eliminar</button>`}
         <button type="submit" class="primary-button">Guardar</button>
       </div>
       ${state.vehicleCameraLastResult ? `<pre class="face-device-result">${escapeHtml(pretty(state.vehicleCameraLastResult))}</pre>` : ''}
@@ -2107,6 +2594,34 @@ async function loadManagedFaceDeviceCloudOptions(accessId) {
   }
 }
 
+async function maybeLoadAutomations() {
+  if (state.activeServiceTab !== 'automations') return;
+  if (state.automationLoading || state.automationLoaded) return;
+  await loadAutomations().catch((error) => {
+    state.automationError = error.message;
+    renderServiceDetail();
+  });
+}
+
+async function loadAutomations() {
+  state.automationLoading = true;
+  state.automationError = '';
+  renderServiceDetail();
+  try {
+    const result = await api(`/api/automations?_=${Date.now()}`);
+    state.automationSettings = result.automations || result;
+    state.automationLoaded = true;
+    return state.automationSettings;
+  } catch (error) {
+    state.automationError = error.message;
+    state.automationLoaded = true;
+    throw error;
+  } finally {
+    state.automationLoading = false;
+    renderServiceDetail();
+  }
+}
+
 async function maybeLoadPedestrianPermissions() {
   if (state.activeServiceTab !== 'pedestrians') return;
   const access = pedestrianAccessContext();
@@ -2234,6 +2749,10 @@ async function loadIdentificationReaderSettings() {
       enumerateOperatorCameras().catch(() => [])
     ]);
     state.operatorIdentificationConfig = result.openaiVision || {};
+    localStorage.setItem(
+      'eolo.operator.cameraZoomPercent',
+      String(identificationCameraZoomPercent(state.operatorIdentificationConfig))
+    );
     state.operatorCameras = cameras;
     if (
       state.selectedOperatorCameraId &&
@@ -3392,6 +3911,7 @@ function renderIdentificationReaderServiceView() {
     ${renderMetrics([
       { label: 'Camaras', value: state.operatorIdentificationLoading ? '...' : cameras.length },
       { label: 'Camara activa', value: selectedCamera?.label || (state.selectedOperatorCameraId ? 'Seleccionada' : 'Sin seleccionar') },
+      { label: 'Campo de vision', value: `${identificationCameraZoomPercent(cfg)}%` },
       { label: 'OpenAI', value: cfg.effectiveApiKeySet ? `Key ${keyLabel}` : 'Sin key' },
       { label: 'Origen key', value: keyLabel },
       { label: 'Modelo', value: cfg.model || '-' }
@@ -3423,6 +3943,21 @@ function renderIdentificationReaderServiceView() {
                   : '<option value="">Sin camaras detectadas</option>'}
               </select>
             </label>
+            <label class="range-field">
+              <span>Campo de vision <strong data-identification-zoom-value>${identificationCameraZoomPercent(cfg)}%</strong></span>
+              <input name="cameraZoomPercent" type="range" min="100" max="220" step="5" value="${escapeAttr(identificationCameraZoomPercent(cfg))}" />
+              <small>Sube el valor para acercar la identificacion cuando la camara queda lejos.</small>
+            </label>
+            <div class="identification-camera-preview" data-identification-camera-preview>
+              <video id="identificationCameraPreview" autoplay playsinline muted></video>
+              <div class="identification-camera-preview-empty" data-identification-camera-preview-empty>
+                Selecciona una camara y pulsa Probar Camara para revisar el encuadre.
+              </div>
+            </div>
+            <div class="form-actions identification-camera-actions">
+              <button type="button" class="primary-button" data-identification-camera-test ${cameras.length ? '' : 'disabled'}>Probar Camara</button>
+              <button type="button" data-identification-camera-stop disabled>Detener camara</button>
+            </div>
           </fieldset>
           <fieldset class="identification-settings-group">
             <legend>Vision</legend>
@@ -3659,6 +4194,112 @@ function renderSyncDevicesTab() {
   `;
 }
 
+function automationSettings() {
+  const settings = state.automationSettings || state.deviceConfig?.automations || {};
+  return {
+    vehicles: {
+      eventsEnabled: Boolean(settings.vehicles?.eventsEnabled),
+      movementsEnabled: Boolean(settings.vehicles?.movementsEnabled)
+    },
+    pedestrians: {
+      ...(settings.pedestrians || {})
+    }
+  };
+}
+
+function renderAutomationsServiceView() {
+  const settings = automationSettings();
+  const vehicles = settings.vehicles;
+  const activeCount = [vehicles.eventsEnabled, vehicles.movementsEnabled].filter(Boolean).length;
+  const activeLabel = activeCount
+    ? `${activeCount} ${activeCount === 1 ? 'Activa' : 'Activas'}`
+    : 'Inactivas';
+  return `
+    <section class="pedestrians-hero-card">
+      <div>
+        <h3>Automatizaciones</h3>
+        <p>Gestiona las funciones automáticas de esta aplicación local</p>
+      </div>
+      <span class="stream-led-pill ${activeCount ? 'active' : ''}">
+        <i aria-hidden="true"></i>
+        ${escapeHtml(activeLabel)}
+      </span>
+    </section>
+    ${renderMetrics([
+      { label: 'Eventos vehiculos', value: vehicles.eventsEnabled ? 'Activos' : 'Inactivos' },
+      { label: 'Movimientos vehiculos', value: vehicles.movementsEnabled ? 'Activos' : 'Inactivos' },
+      { label: 'ANPR', value: anprApiIsRunning() ? 'Disponible' : 'Sin respuesta' },
+      { label: 'Permisos', value: state.vehiclePermissionSummary?.vehicles ?? state.syncPermissions.filter((permission) => permissionMatchesKind(permission, 'vehicle')).length }
+    ])}
+    <div class="service-inner-tabs automations-tabs" role="tablist" aria-label="Automatizaciones">
+      <button class="service-inner-tab ${state.activeAutomationTab === 'vehicles' ? 'active' : ''}" type="button" data-automation-tab="vehicles">Vehiculos</button>
+      <button class="service-inner-tab ${state.activeAutomationTab === 'pedestrians' ? 'active' : ''}" type="button" data-automation-tab="pedestrians">Peatones</button>
+    </div>
+    ${state.activeAutomationTab === 'pedestrians'
+      ? renderPedestrianAutomationsTab(settings)
+      : renderVehicleAutomationsTab(settings)}
+  `;
+}
+
+function renderVehicleAutomationsTab(settings = automationSettings()) {
+  const vehicles = settings.vehicles || {};
+  const access = pedestrianAccessContext();
+  const anprConfigState = anprConfig();
+  return `
+    <section class="service-section wide pedestrians-section">
+      <div class="service-section-heading compact">
+        <div>
+          <h4>Vehiculos</h4>
+          <p>${access.id ? `Acceso activo: ${escapeHtml(access.name || access.id)}` : 'Sin acceso activo guardado para movimientos Cloud.'}</p>
+        </div>
+        <button type="button" data-automations-refresh ${state.automationLoading ? 'disabled' : ''}>
+          ${state.automationLoading ? 'Actualizando...' : 'Actualizar'}
+        </button>
+      </div>
+      ${state.automationError ? `<div class="service-warning">${escapeHtml(state.automationError)}</div>` : ''}
+      ${state.automationMessage ? `<p class="form-message ok">${escapeHtml(state.automationMessage)}</p>` : ''}
+      ${renderDefinitionList([
+        { label: 'Eventos locales', value: vehicles.eventsEnabled ? 'Activos' : 'Inactivos' },
+        { label: 'Movimientos Cloud', value: vehicles.movementsEnabled ? 'Activos' : 'Inactivos' },
+        { label: 'Filtro vehiculo presente', value: anprConfigState.require_vehicle_detection ? 'Activo' : 'Inactivo' },
+        { label: 'Validacion placa', value: anprConfigState.strict_plate_validation ? 'Estricta' : 'Flexible' }
+      ])}
+      <form class="anpr-config-form" id="vehicleAutomationForm">
+        <div class="anpr-config-grid">
+          <label class="toggle-field wide-field">
+            <input name="eventsEnabled" type="checkbox" ${vehicles.eventsEnabled ? 'checked' : ''} />
+            <span>Registrar automáticamente Eventos de Vehiculos</span>
+          </label>
+          <label class="toggle-field wide-field">
+            <input name="movementsEnabled" type="checkbox" ${vehicles.movementsEnabled ? 'checked' : ''} />
+            <span>Registrar automáticamente Movimientos de Vehículos</span>
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="primary-button" ${state.automationLoading ? 'disabled' : ''}>
+            ${state.automationLoading ? 'Guardando...' : 'Guardar'}
+          </button>
+        </div>
+      </form>
+    </section>
+  `;
+}
+
+function renderPedestrianAutomationsTab() {
+  return `
+    <section class="service-section wide pedestrians-section">
+      <div class="service-section-heading compact">
+        <div>
+          <h4>Peatones</h4>
+          <p>Las automatizaciones peatonales actuales se mantienen desde el flujo de reconocimiento facial.</p>
+        </div>
+        ${renderStateLed(true, 'Sin cambios')}
+      </div>
+      <div class="empty-state compact">Sin ajustes adicionales para peatones.</div>
+    </section>
+  `;
+}
+
 function renderLogsServiceView() {
   const selected = findSettingsLog(state.selectedSettingsLogId);
   if (selected) return renderSettingsLogDetail(selected);
@@ -3810,6 +4451,82 @@ function logMetaSummary(record = {}) {
   if (meta.serviceId) return `serviceId: ${meta.serviceId}`;
   if (meta.accessId) return `accessId: ${meta.accessId}`;
   return Object.keys(meta).slice(0, 4).join(', ');
+}
+
+function identificationCameraZoomPercent(cfg = state.operatorIdentificationConfig || {}) {
+  const value = Number(cfg.cameraZoomPercent || localStorage.getItem('eolo.operator.cameraZoomPercent') || 100);
+  if (!Number.isFinite(value)) return 100;
+  return Math.min(220, Math.max(100, Math.round(value)));
+}
+
+function identificationPreviewZoomPercent() {
+  const slider = $('#identificationReaderForm [name="cameraZoomPercent"]');
+  return identificationCameraZoomPercent({ cameraZoomPercent: slider?.value });
+}
+
+function applyIdentificationCameraPreviewZoom() {
+  const zoom = identificationPreviewZoomPercent() / 100;
+  $('#identificationCameraPreview')?.style.setProperty('--identification-camera-zoom', String(zoom));
+}
+
+function setIdentificationCameraPreviewMessage(message, { active = false } = {}) {
+  const empty = $('[data-identification-camera-preview-empty]');
+  if (empty) {
+    empty.textContent = message;
+    empty.hidden = active;
+  }
+  const stopButton = $('[data-identification-camera-stop]');
+  if (stopButton) stopButton.disabled = !active;
+}
+
+function stopIdentificationCameraPreview(message = 'Selecciona una camara y pulsa Probar Camara para revisar el encuadre.') {
+  state.identificationCameraPreviewStream?.getTracks?.().forEach((track) => track.stop());
+  state.identificationCameraPreviewStream = null;
+  const video = $('#identificationCameraPreview');
+  if (video) {
+    video.pause?.();
+    video.srcObject = null;
+  }
+  setIdentificationCameraPreviewMessage(message);
+}
+
+async function testIdentificationCameraPreview() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('La camara no esta disponible en este navegador. Usa un navegador con acceso a dispositivos multimedia.');
+  }
+  const cameraId = $('#identificationReaderForm [name="cameraId"]')?.value || state.selectedOperatorCameraId;
+  if (!cameraId) throw new Error('Selecciona una camara antes de iniciar la prueba.');
+
+  const testButton = $('[data-identification-camera-test]');
+  if (testButton) testButton.disabled = true;
+  stopIdentificationCameraPreview('Iniciando camara...');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { deviceId: { exact: cameraId } }
+    });
+    const video = $('#identificationCameraPreview');
+    if (!video) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    state.identificationCameraPreviewStream = stream;
+    video.srcObject = stream;
+    applyIdentificationCameraPreviewZoom();
+    await video.play();
+    applyIdentificationCameraPreviewZoom();
+    setIdentificationCameraPreviewMessage('Vista de camara activa.', { active: true });
+    addMessage('assistant', 'Camara de identificacion disponible para prueba.', {
+      ok: true,
+      cameraId,
+      zoomPercent: identificationPreviewZoomPercent()
+    });
+  } catch (error) {
+    stopIdentificationCameraPreview(`No se pudo abrir la camara: ${error.message}`);
+    throw error;
+  } finally {
+    if (testButton) testButton.disabled = false;
+  }
 }
 
 function syncIdentificationReaderControls() {
@@ -4648,7 +5365,13 @@ async function downloadEoloUsersFromCloud() {
       state.syncPermissionsSourceCount = Number(result.sourceCount || result.cloudCount || result.permissions.length);
     }
     const expired = Number(result.skippedExpired || 0);
-    const message = `Descarga permisos: ${result.cloudCount || 0} vigentes, ${result.validCloudCount || 0} usuarios faciales para snapshot, ${result.skippedForDeviceCount || 0} omitidos para dispositivo${expired ? `, ${expired} vencidos omitidos` : ''}.`;
+    const anprVehicleSync = result.anprVehicleSync;
+    const anprVehicleText = anprVehicleSync
+      ? anprVehicleSync.ok
+        ? `, ${anprVehicleSync.vehicles || 0} vehiculos ANPR sincronizados`
+        : `, vehiculos ANPR no sincronizados: ${anprVehicleSync.error}`
+      : '';
+    const message = `Descarga permisos: ${result.cloudCount || 0} vigentes, ${result.validCloudCount || 0} usuarios faciales para snapshot, ${result.skippedForDeviceCount || 0} omitidos para dispositivo${expired ? `, ${expired} vencidos omitidos` : ''}${anprVehicleText}.`;
     showEoloSyncDebug({ ok: true, message, result });
     addMessage('assistant', message, result);
     await refreshSyncStatus();
@@ -4698,6 +5421,146 @@ async function saveSyncDeviceSettings(form) {
   });
   await refreshHealth();
   return result;
+}
+
+async function saveAutomationSettings(form) {
+  state.automationLoading = true;
+  state.automationError = '';
+  state.automationMessage = '';
+  renderServiceDetail();
+  try {
+    const payload = {
+      automations: {
+        vehicles: {
+          eventsEnabled: form.elements.eventsEnabled.checked,
+          movementsEnabled: form.elements.movementsEnabled.checked
+        }
+      }
+    };
+    const result = await api('/api/automations', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    state.automationSettings = result.automations || payload.automations;
+    state.automationLoaded = true;
+    if (state.deviceConfig) state.deviceConfig.automations = state.automationSettings;
+    state.automationMessage = result.anpr?.ok === false
+      ? `Guardado localmente; ANPR no confirmo actualizacion: ${result.anpr.error || 'sin detalle'}`
+      : 'Automatizaciones guardadas.';
+    await loadServices().catch(() => {});
+    return result;
+  } finally {
+    state.automationLoading = false;
+    renderServiceDetail();
+  }
+}
+
+function readLaneForm(form) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  const devices = {
+    cameras: $$('input[name="cameras"]:checked', form).map((input) => input.value),
+    barriers: $$('input[name="barriers"]:checked', form).map((input) => input.value),
+    biometricReaders: $$('input[name="biometricReaders"]:checked', form).map((input) => input.value),
+    presenceSensors: parseLaneList(data.presenceSensors),
+    displays: parseLaneList(data.displays),
+    relays: parseLaneList(data.relays),
+    turnstiles: parseLaneList(data.turnstiles),
+    doors: parseLaneList(data.doors)
+  };
+  return {
+    code: data.code,
+    name: data.name,
+    kind: data.kind,
+    direction: data.direction,
+    enabled: form.elements.enabled.checked,
+    automatic: form.elements.automatic.checked,
+    rule: data.rule,
+    accessId: data.accessId,
+    accessName: pedestrianAccessContext().name || '',
+    controlPointId: data.controlPointId,
+    controlPointName: data.controlPointName,
+    barrierTimeSeconds: Number(data.barrierTimeSeconds || 6),
+    flowToday: Number(data.flowToday || 0),
+    availabilityPercent: Number(data.availabilityPercent || 99.8),
+    devices,
+    notes: data.notes
+  };
+}
+
+function parseLaneList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function saveLane(form) {
+  const laneId = form.dataset.laneFormId || state.selectedLaneId || 'new';
+  const isNew = laneId === 'new';
+  const payload = readLaneForm(form);
+  state.laneLoading = true;
+  state.laneError = '';
+  state.laneMessage = '';
+  renderServiceDetail();
+  try {
+    const result = await api(isNew ? '/api/lanes' : `/api/lanes/${encodeURIComponent(laneId)}`, {
+      method: isNew ? 'POST' : 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    state.lanes = result.lanes || [];
+    state.selectedLaneId = result.lane?.id || laneId;
+    state.laneMessage = isNew ? 'Carril creado y guardado localmente.' : 'Carril actualizado.';
+    addMessage('assistant', state.laneMessage, { ok: true, lane: result.lane });
+  } catch (error) {
+    state.laneError = error.message;
+    throw error;
+  } finally {
+    state.laneLoading = false;
+    renderServices();
+  }
+}
+
+async function deleteLane(laneId) {
+  if (!laneId || laneId === 'new') return;
+  const lane = laneList().find((item) => item.id === laneId);
+  if (!window.confirm(`Eliminar ${lane?.name || 'este carril'}?`)) return;
+  state.laneLoading = true;
+  state.laneError = '';
+  state.laneMessage = '';
+  renderServiceDetail();
+  try {
+    const result = await api(`/api/lanes/${encodeURIComponent(laneId)}`, { method: 'DELETE' });
+    state.lanes = result.lanes || [];
+    state.selectedLaneId = '';
+    state.laneMessage = 'Carril eliminado.';
+    addMessage('assistant', 'Carril eliminado.', { ok: true, laneId });
+  } catch (error) {
+    state.laneError = error.message;
+    throw error;
+  } finally {
+    state.laneLoading = false;
+    renderServices();
+  }
+}
+
+async function openLaneBarrier(laneId) {
+  const lane = laneList().find((item) => item.id === laneId);
+  const barrierIdValue = lane?.devices?.barriers?.[0] || '';
+  if (!barrierIdValue) {
+    state.laneError = 'Este carril no tiene una barrera vinculada para apertura manual.';
+    state.laneMessage = '';
+    renderServiceDetail();
+    return;
+  }
+  const result = await api(`/api/anpr/barriers/${encodeURIComponent(barrierIdValue)}/open`, {
+    method: 'POST'
+  });
+  state.laneMessage = `Comando de apertura enviado a ${barrierIdValue}.`;
+  state.laneError = '';
+  renderServiceDetail();
+  addMessage('assistant', state.laneMessage, result);
 }
 
 async function runEoloTaskPoll() {
@@ -4773,6 +5636,38 @@ async function saveVehicleCamera(form) {
   return result;
 }
 
+async function deleteVehicleCamera(indexValue = state.selectedVehicleCameraIndex) {
+  if (indexValue === 'new' || indexValue === '') return;
+  const index = Number(indexValue);
+  const existing = anprHardware();
+  const cameras = [...vehicleCameras()];
+  if (!Number.isInteger(index) || index < 0 || index >= cameras.length) {
+    throw new Error('La camara seleccionada ya no existe en la configuracion local.');
+  }
+  const [removed] = cameras.splice(index, 1);
+  const result = await api('/api/anpr/hardware', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      cameras,
+      barriers: existing.barriers || []
+    })
+  });
+  state.anprHardware = result;
+  state.anprHardwareError = null;
+  state.selectedVehicleCameraIndex = '';
+  state.vehicleCameraLastResult = {
+    ok: true,
+    message: 'Camara ANPR eliminada.',
+    removed: removed?.name || removed?.rtsp || `Camara ${index + 1}`,
+    cameras: result.cameras?.length || 0,
+    barriers: result.barriers?.length || 0
+  };
+  addMessage('assistant', 'Camara ANPR eliminada.', state.vehicleCameraLastResult);
+  await loadServices().catch(() => {});
+  return result;
+}
+
 async function saveBarrierDevice(form) {
   const barrier = readBarrierDeviceForm(form);
   if (!barrier.id_barra && !barrier.ip_puerto) {
@@ -4831,10 +5726,12 @@ async function saveIdentificationReaderSettings(form) {
   const hasSavedKey = Boolean(state.operatorIdentificationConfig?.apiKeySet);
   const shouldChangeKey = !hasSavedKey || form.elements.changeApiKey.checked;
   const cameraId = form.elements.cameraId.value;
+  const cameraZoomPercent = Number(form.elements.cameraZoomPercent?.value || 100);
   const payload = {
     enabled: form.elements.enabled.checked,
     model: form.elements.model.value.trim() || 'gpt-4o-mini',
-    apiKey: shouldChangeKey ? form.elements.apiKey.value.trim() : ''
+    apiKey: shouldChangeKey ? form.elements.apiKey.value.trim() : '',
+    cameraZoomPercent
   };
   const result = await api('/api/operator/vision-config', {
     method: 'PUT',
@@ -4845,6 +5742,7 @@ async function saveIdentificationReaderSettings(form) {
   state.selectedOperatorCameraId = cameraId;
   if (cameraId) localStorage.setItem('eolo.operator.cameraId', cameraId);
   else localStorage.removeItem('eolo.operator.cameraId');
+  localStorage.setItem('eolo.operator.cameraZoomPercent', String(identificationCameraZoomPercent(state.operatorIdentificationConfig)));
   state.operatorIdentificationLoaded = true;
   state.operatorIdentificationMessage = 'Configuracion de lectura de identificaciones guardada.';
   renderServiceSidebar();
@@ -4854,6 +5752,7 @@ async function saveIdentificationReaderSettings(form) {
     enabled: state.operatorIdentificationConfig.enabled,
     apiKeySet: state.operatorIdentificationConfig.apiKeySet,
     model: state.operatorIdentificationConfig.model,
+    cameraZoomPercent: state.operatorIdentificationConfig.cameraZoomPercent,
     cameraSet: Boolean(cameraId)
   });
   return result;
@@ -5281,6 +6180,57 @@ $('#serviceDetail').addEventListener('click', (event) => {
     return;
   }
 
+  const laneFilter = event.target.closest('[data-lane-filter]');
+  if (laneFilter) {
+    state.activeLaneFilter = laneFilter.dataset.laneFilter;
+    state.selectedLaneId = '';
+    state.laneMessage = '';
+    state.laneError = '';
+    renderServiceDetail();
+    return;
+  }
+
+  if (event.target.closest('[data-lane-back]')) {
+    state.selectedLaneId = '';
+    state.laneMessage = '';
+    state.laneError = '';
+    renderServiceDetail();
+    return;
+  }
+
+  if (event.target.closest('[data-lane-new]')) {
+    state.selectedLaneId = 'new';
+    state.laneMessage = '';
+    state.laneError = '';
+    renderServiceDetail();
+    return;
+  }
+
+  const laneDetail = event.target.closest('[data-lane-detail]');
+  if (laneDetail) {
+    state.selectedLaneId = laneDetail.dataset.laneDetail;
+    state.laneMessage = '';
+    state.laneError = '';
+    renderServiceDetail();
+    return;
+  }
+
+  const laneDelete = event.target.closest('[data-lane-delete]');
+  if (laneDelete) {
+    deleteLane(laneDelete.dataset.laneDelete).catch((error) =>
+      addMessage('assistant', error.message, { error: true })
+    );
+    return;
+  }
+
+  const laneOpen = event.target.closest('[data-lane-open]');
+  if (laneOpen) {
+    openLaneBarrier(laneOpen.dataset.laneOpen).catch((error) =>
+      addMessage('assistant', error.message, { error: true })
+    );
+    return;
+  }
+
   if (event.target.closest('[data-settings-log-back]')) {
     state.selectedSettingsLogId = '';
     renderServiceDetail();
@@ -5322,6 +6272,25 @@ $('#serviceDetail').addEventListener('click', (event) => {
     state.syncDeviceMessage = '';
     state.syncDeviceError = '';
     renderServiceDetail();
+    return;
+  }
+
+  const automationTab = event.target.closest('[data-automation-tab]');
+  if (automationTab) {
+    state.activeAutomationTab = automationTab.dataset.automationTab;
+    state.automationMessage = '';
+    state.automationError = '';
+    renderServiceDetail();
+    return;
+  }
+
+  if (event.target.closest('[data-automations-refresh]')) {
+    state.automationLoaded = false;
+    loadAutomations().catch((error) => {
+      state.automationError = error.message;
+      renderServiceDetail();
+      addMessage('assistant', error.message, { error: true });
+    });
     return;
   }
 
@@ -5370,6 +6339,18 @@ $('#serviceDetail').addEventListener('click', (event) => {
       state.operatorIdentificationError = error.message;
       renderServiceDetail();
     });
+    return;
+  }
+
+  if (event.target.closest('[data-identification-camera-test]')) {
+    testIdentificationCameraPreview().catch((error) =>
+      addMessage('assistant', `No se pudo probar la camara: ${error.message}`, { error: true })
+    );
+    return;
+  }
+
+  if (event.target.closest('[data-identification-camera-stop]')) {
+    stopIdentificationCameraPreview('Vista de camara detenida.');
     return;
   }
 
@@ -5450,6 +6431,14 @@ $('#serviceDetail').addEventListener('click', (event) => {
     state.selectedVehicleCameraIndex = 'new';
     state.vehicleCameraLastResult = null;
     renderServiceDetail();
+    return;
+  }
+
+  const vehicleCameraDelete = event.target.closest('[data-vehicle-camera-delete]');
+  if (vehicleCameraDelete) {
+    deleteVehicleCamera(vehicleCameraDelete.dataset.vehicleCameraDelete).catch((error) =>
+      addMessage('assistant', error.message, { error: true })
+    );
     return;
   }
 
@@ -5676,6 +6665,14 @@ $('#serviceDetail').addEventListener('change', (event) => {
   }
   if (event.target.matches('#identificationReaderForm [name="cameraId"]')) {
     state.selectedOperatorCameraId = event.target.value;
+    stopIdentificationCameraPreview('La camara seleccionada cambio. Pulsa Probar Camara para revisar el nuevo encuadre.');
+  }
+  if (event.target.matches('#identificationReaderForm [name="cameraZoomPercent"]')) {
+    const value = identificationCameraZoomPercent({ cameraZoomPercent: event.target.value });
+    localStorage.setItem('eolo.operator.cameraZoomPercent', String(value));
+    const output = $('#identificationReaderForm [data-identification-zoom-value]');
+    if (output) output.textContent = `${value}%`;
+    applyIdentificationCameraPreviewZoom();
   }
   if (event.target.closest('[data-cloud-branch-preset]')) {
     syncCloudSyncControls();
@@ -5686,6 +6683,15 @@ $('#serviceDetail').addEventListener('change', (event) => {
 });
 
 $('#serviceDetail').addEventListener('input', (event) => {
+  if (event.target.matches('#identificationReaderForm [name="cameraZoomPercent"]')) {
+    const value = identificationCameraZoomPercent({ cameraZoomPercent: event.target.value });
+    localStorage.setItem('eolo.operator.cameraZoomPercent', String(value));
+    const output = $('#identificationReaderForm [data-identification-zoom-value]');
+    if (output) output.textContent = `${value}%`;
+    applyIdentificationCameraPreviewZoom();
+    return;
+  }
+
   const syncInput = event.target.closest('[data-sync-permission-search]');
   if (syncInput) {
     const value = syncInput.value;
@@ -5767,6 +6773,20 @@ $('#serviceDetail').addEventListener('submit', (event) => {
       renderServiceDetail();
       addMessage('assistant', error.message, { error: true });
     });
+    return;
+  }
+  if (event.target.matches('#vehicleAutomationForm')) {
+    event.preventDefault();
+    saveAutomationSettings(event.target).catch((error) => {
+      state.automationError = error.message;
+      renderServiceDetail();
+      addMessage('assistant', error.message, { error: true });
+    });
+    return;
+  }
+  if (event.target.matches('#laneForm')) {
+    event.preventDefault();
+    saveLane(event.target).catch((error) => addMessage('assistant', error.message, { error: true }));
     return;
   }
   if (event.target.matches('#anprHardwareForm')) {
@@ -5930,6 +6950,8 @@ $('#mockEventBtn').addEventListener('click', () => {
     body: JSON.stringify({ employeeNo: '1001', name: 'Persona de prueba' })
   }).catch((error) => addMessage('assistant', error.message));
 });
+
+window.addEventListener('pagehide', () => stopIdentificationCameraPreview());
 
 addMessage(
   'assistant',

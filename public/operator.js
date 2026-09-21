@@ -40,6 +40,9 @@ const state = {
   visibleStreamCameraCount: 0,
   streamCameraCollapsed: localStorage.getItem('eolo.operator.streamCameraCollapsed') === 'true',
   anprDetectionTimer: null,
+  anprMovementRefreshTimer: null,
+  anprMovementRefreshKey: '',
+  anprMovementRefreshAt: 0,
   anprDetectionIntervalMs: 1000,
   selectedMovement: null,
   controlPointSelectionRequired: false,
@@ -48,6 +51,7 @@ const state = {
   movementType: 'Visita',
   cameras: [],
   selectedCameraId: localStorage.getItem('eolo.operator.cameraId') || '',
+  cameraZoomPercent: Number(localStorage.getItem('eolo.operator.cameraZoomPercent') || 100),
   settingsCameraStream: null,
   idCameraStream: null,
   idPhotoDataUrl: '',
@@ -1302,6 +1306,7 @@ function toggleStreamInventoryLayout() {
 
 async function refreshAnprDetections() {
   if (!state.token || !$('#movementsView') || $('#movementsView').classList.contains('hidden')) return;
+  const previousRefreshKey = state.anprMovementRefreshKey;
   const [detectionsResult, statusResult] = await Promise.all([
     api('/api/operator/anpr-detections', { silent: true }),
     api('/api/operator/anpr-status', { silent: true }).catch(() => ({ cameras: {} }))
@@ -1309,6 +1314,42 @@ async function refreshAnprDetections() {
   state.anprDetections = detectionsResult.detections || {};
   state.anprStatus = statusResult.cameras || {};
   renderAnprTelemetry();
+  const nextRefreshKey = anprMovementDetectionKey(state.anprDetections);
+  if (nextRefreshKey && nextRefreshKey !== previousRefreshKey) {
+    scheduleAnprMovementRefresh(nextRefreshKey);
+  }
+}
+
+function anprMovementDetectionKey(detections = {}) {
+  const now = Date.now();
+  return Object.entries(detections)
+    .map(([cameraName, detection]) => {
+      const plate = normalizePlateLookupValue(detection?.plate);
+      const detectedAt = Number(detection?.detected_at_ms || Date.parse(detection?.detected_at || ''));
+      if (!plate || !Number.isFinite(detectedAt) || now - detectedAt > 60000) return '';
+      return `${cameraName}:${plate}:${detectedAt}`;
+    })
+    .filter(Boolean)
+    .sort()
+    .join('|');
+}
+
+function scheduleAnprMovementRefresh(refreshKey) {
+  state.anprMovementRefreshKey = refreshKey;
+  if (!state.activeAccess?.id || $('#movementsView')?.classList.contains('hidden')) return;
+  if (state.anprMovementRefreshTimer) clearTimeout(state.anprMovementRefreshTimer);
+  const elapsed = Date.now() - Number(state.anprMovementRefreshAt || 0);
+  const delay = elapsed < 8000 ? 8000 - elapsed : 1800;
+  state.anprMovementRefreshTimer = setTimeout(async () => {
+    state.anprMovementRefreshTimer = null;
+    state.anprMovementRefreshAt = Date.now();
+    try {
+      await loadMovements();
+      loadInventorySummary().catch(() => {});
+    } catch (_error) {
+      // El refresco normal de sincronizacion conservara la vista aunque este intento puntual falle.
+    }
+  }, delay);
 }
 
 function renderAnprTelemetry() {
@@ -1637,6 +1678,8 @@ function startAnprDetectionTimer() {
 function stopAnprDetectionTimer() {
   if (state.anprDetectionTimer) clearInterval(state.anprDetectionTimer);
   state.anprDetectionTimer = null;
+  if (state.anprMovementRefreshTimer) clearTimeout(state.anprMovementRefreshTimer);
+  state.anprMovementRefreshTimer = null;
 }
 
 async function loadPendingMovements() {
@@ -2875,6 +2918,9 @@ async function loadOperatorVisionConfig() {
   const suffix = query.toString() ? `?${query}` : '';
   const result = await api(`/api/operator/vision-config${suffix}`);
   state.visionConfig = result.openaiVision || {};
+  setIdentificationCameraZoom(state.visionConfig.cameraZoomPercent || state.cameraZoomPercent || 100, {
+    persistLocal: true
+  });
   renderVisionConfig();
   return state.visionConfig;
 }
@@ -2882,6 +2928,9 @@ async function loadOperatorVisionConfig() {
 function renderVisionConfig() {
   if (!$('#visionEnabled')) return;
   const cfg = state.visionConfig || {};
+  setIdentificationCameraZoom(cfg.cameraZoomPercent || state.cameraZoomPercent || 100, {
+    persistLocal: true
+  });
   $('#visionEnabled').checked = Boolean(cfg.enabled);
   $('#visionModel').value = cfg.model || 'gpt-4o-mini';
   $('#visionApiKey').value = '';
@@ -2915,16 +2964,43 @@ async function saveVisionConfig() {
   const payload = {
     enabled: $('#visionEnabled').checked,
     model: $('#visionModel').value.trim() || 'gpt-4o-mini',
-    apiKey: shouldChangeKey ? $('#visionApiKey').value.trim() : ''
+    apiKey: shouldChangeKey ? $('#visionApiKey').value.trim() : '',
+    cameraZoomPercent: state.cameraZoomPercent
   };
   const result = await api('/api/operator/vision-config', {
     method: 'PUT',
     body: JSON.stringify(payload)
   });
   state.visionConfig = result.openaiVision || {};
+  setIdentificationCameraZoom(state.visionConfig.cameraZoomPercent || state.cameraZoomPercent || 100, {
+    persistLocal: true
+  });
   renderVisionConfig();
   setMessage($('#visionConfigMessage'), 'Configuracion guardada.', false);
   showToast({ type: 'success', title: 'OpenAI Vision actualizado' });
+}
+
+async function saveCameraZoomSetting() {
+  if (!state.visionConfig) {
+    await loadOperatorVisionConfig().catch(() => {});
+  }
+  const cfg = state.visionConfig || {};
+  const payload = {
+    enabled: Boolean(cfg.enabled),
+    model: cfg.model || 'gpt-4o-mini',
+    apiKey: '',
+    cameraZoomPercent: state.cameraZoomPercent
+  };
+  const result = await api('/api/operator/vision-config', {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+  state.visionConfig = result.openaiVision || {};
+  setIdentificationCameraZoom(state.visionConfig.cameraZoomPercent || state.cameraZoomPercent || 100, {
+    persistLocal: true
+  });
+  showToast({ type: 'success', title: 'Campo de visión guardado' });
+  return result;
 }
 
 async function loadOperatorCloudConfig() {
@@ -3133,6 +3209,36 @@ function updateSelectedCameraLabel() {
   $('#selectedCameraLabel').textContent = camera?.label || (state.selectedCameraId ? 'Cámara seleccionada' : 'Sin seleccionar');
 }
 
+function identificationCameraZoomPercent(value = state.cameraZoomPercent) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 100;
+  return Math.min(220, Math.max(100, Math.round(parsed)));
+}
+
+function setIdentificationCameraZoom(value, { persistLocal = false } = {}) {
+  state.cameraZoomPercent = identificationCameraZoomPercent(value);
+  if (persistLocal) {
+    localStorage.setItem('eolo.operator.cameraZoomPercent', String(state.cameraZoomPercent));
+  }
+  const slider = $('#cameraZoomRange');
+  if (slider && Number(slider.value) !== state.cameraZoomPercent) slider.value = String(state.cameraZoomPercent);
+  const output = $('#cameraZoomValue');
+  if (output) output.textContent = `${state.cameraZoomPercent}%`;
+  applyIdentificationCameraZoom();
+}
+
+function applyIdentificationCameraZoom() {
+  const zoom = identificationCameraZoomPercent() / 100;
+  [$('#settingsCameraPreview'), $('#idCameraVideo')].forEach((video) => {
+    if (!video) return;
+    video.style.setProperty('--id-camera-zoom', String(zoom));
+  });
+  [$('.camera-preview'), $('.id-camera-stage')].forEach((stage) => {
+    if (!stage) return;
+    stage.style.setProperty('--id-camera-zoom', String(zoom));
+  });
+}
+
 async function startCamera(video, { preview = 'settings' } = {}) {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('La cámara no está disponible en este navegador.');
   const constraints = state.selectedCameraId
@@ -3140,7 +3246,9 @@ async function startCamera(video, { preview = 'settings' } = {}) {
     : { video: true };
   const stream = await navigator.mediaDevices.getUserMedia(constraints);
   video.srcObject = stream;
+  applyIdentificationCameraZoom();
   await video.play();
+  applyIdentificationCameraZoom();
   if (preview === 'settings') state.settingsCameraStream = stream;
   else state.idCameraStream = stream;
   return stream;
@@ -3675,8 +3783,16 @@ function bindEvents() {
     updateSelectedCameraLabel();
     stopSettingsCamera();
   });
+  $('#cameraZoomRange').addEventListener('input', (event) => {
+    setIdentificationCameraZoom(event.target.value, { persistLocal: true });
+  });
   $('#testCameraBtn').addEventListener('click', () => {
     testSettingsCamera().catch((error) => showToast({ type: 'error', title: 'No se pudo abrir la cámara', message: error.message }));
+  });
+  $('#saveCameraZoomBtn').addEventListener('click', () => {
+    saveCameraZoomSetting().catch((error) =>
+      showToast({ type: 'error', title: 'No se pudo guardar el campo de visión', message: error.message })
+    );
   });
   $('#stopSettingsCameraBtn').addEventListener('click', stopSettingsCamera);
   $$('[data-operator-settings-tab]').forEach((button) => {
@@ -3897,4 +4013,5 @@ function bindEvents() {
 }
 
 bindEvents();
+setIdentificationCameraZoom(state.cameraZoomPercent, { persistLocal: true });
 restoreSession();

@@ -20,6 +20,7 @@ export const config = {
   mockDevice: boolFromEnv('MOCK_DEVICE', true),
   faceDevice: process.env.FACE_DEVICE === 'dahua' ? 'dahua' : 'hikvision',
   faceDevices: [],
+  lanes: [],
   hikvision: {
     bridgeIdentifier: process.env.BRIDGE_IDENTIFIER || 'Nuevo Dispositivo Bridge',
     localDeviceId: process.env.LOCAL_DEVICE_ID || '',
@@ -114,7 +115,15 @@ export const config = {
     enabled: boolFromEnv('OPENAI_VISION_ENABLED', false),
     apiKey: process.env.OPENAI_VISION_API_KEY || process.env.OPENAI_API_KEY || '',
     model: process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini',
-    timeoutMs: intFromEnv('OPENAI_VISION_TIMEOUT_SECONDS', 18) * 1000
+    timeoutMs: intFromEnv('OPENAI_VISION_TIMEOUT_SECONDS', 18) * 1000,
+    cameraZoomPercent: intFromEnv('IDENTIFICATION_CAMERA_ZOOM_PERCENT', 100)
+  },
+  automations: {
+    vehicles: {
+      eventsEnabled: boolFromEnv('EOLO_AUTO_VEHICLE_EVENTS', false),
+      movementsEnabled: boolFromEnv('EOLO_AUTO_VEHICLE_MOVEMENTS', false)
+    },
+    pedestrians: {}
   },
   anpr: {
     baseUrl: process.env.ANPR_API_BASE_URL || 'http://127.0.0.1:8090',

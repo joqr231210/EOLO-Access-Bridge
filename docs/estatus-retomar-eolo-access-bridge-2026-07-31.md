@@ -9,7 +9,7 @@ Ruta actual de trabajo:
 /Users/joqr231210/Documents/EOLO-Access-Bridge
 ```
 
-Nota de vigencia: este documento conserva historial tecnico. Para la superficie visible actual de `/settings` y `/operator`, tomar como referencia principal la seccion `Actualizacion 2026-09-04 - Corte local v0.2.10`.
+Nota de vigencia: este documento conserva historial tecnico. Para la superficie visible actual de `/settings` y `/operator`, tomar como referencia principal la seccion `Actualizacion 2026-09-21 - Carriles, automatizaciones y camara de identificaciones`.
 
 ## 1. Objetivo actual
 
@@ -2214,3 +2214,67 @@ Versionado:
 
 - `package.json`, `package-lock.json` y version visible del operador quedan en `0.2.10`;
 - `updates/windows-latest.json` permanece apuntando a `0.2.9` hasta que exista el instalador Windows `0.2.10` publicado y el manifiesto pueda generarse con SHA-256 real.
+
+## Actualizacion 2026-09-21 - Carriles, automatizaciones y camara de identificaciones
+
+Este corte amplia la configuracion local sin reemplazar las entidades tecnicas existentes. Camaras ANPR, lectores biometricos y barreras siguen administrandose en sus vistas propias; `Carriles` los referencia para representar el flujo fisico que los une.
+
+### Carriles
+
+`/settings > Carriles` permite crear, editar y eliminar carriles locales de tipo `vehicular`, `peatonal` o `mixto`.
+
+- cada carril conserva nombre, codigo, direccion, regla operativa, punto de control, estado y tiempo de barrera;
+- vincula referencias a camaras, barreras, lectores biometricos y perifericos declarativos como sensores, displays, relevadores, torniquetes o puertas;
+- la topologia y el resumen de dispositivos se resuelven desde la configuracion actual de hardware, sin duplicar credenciales ni configuracion de red;
+- la apertura manual usa la primera barrera vinculada y el endpoint existente de ANPR;
+- los datos se persisten en `data/device-config.json`, bajo `lanes`.
+
+API local:
+
+- `GET /api/lanes`;
+- `POST /api/lanes`;
+- `PUT /api/lanes/:id`;
+- `DELETE /api/lanes/:id`.
+
+### Automatizaciones vehiculares
+
+`/settings > Servicios > Automatizaciones > Vehiculos` contiene dos ajustes persistentes:
+
+- `Registrar automaticamente Eventos de Vehiculos` crea auditoria local;
+- `Registrar automaticamente Movimientos de Vehiculos` crea y publica `AccesoMovimiento` hacia EOLO Cloud.
+
+El callback de ANPR se activa despues de respetar los filtros ya configurados por camara, incluidos deteccion de vehiculo, confianza y tamano minimo de placa. No aplica deduplicacion ni verifica inventario previo: una deteccion valida de entrada registra `Ingresado` y una de salida registra `Egresado`. Tambien conserva en el evento si se intento abrir una barrera asociada.
+
+Cuando la placa corresponde a un `PermisoAccesos` vehicular vigente, el evento y movimiento se etiquetan con el tipo de permiso normalizado, por ejemplo `Visita` o `Residente`.
+
+La descarga de permisos ahora llama al sincronizador ANPR de vehiculos: solo incorpora permisos vehiculares con placa, y elimina de la tabla local ANPR las placas que ya no existen en el snapshot actual. Esta tabla sigue siendo el origen para la operacion ANPR existente.
+
+### Movimientos locales y cloud
+
+Los movimientos generados por automatizacion se escriben primero en el registro local de movimientos y despues se publican al cloud. La vista `Movimientos` combina esos movimientos con los datos descargados desde cloud usando el mismo alcance de acceso y punto de control, para que no desaparezcan localmente aunque el alta se origine en ANPR.
+
+### WebRTC
+
+El contenedor Bridge instala `go2rtc` para la arquitectura de la imagen y lo expone en el puerto `1984`, con puertos ICE `8555/tcp` y `8555/udp`. Esto corrige el error `spawn /usr/local/bin/go2rtc ENOENT` al iniciar el visualizador RTC.
+
+### Lectura de identificaciones
+
+En `/settings > Lectura de Identificaciones` el valor `openaiVision.cameraZoomPercent` se guarda localmente entre 100 y 220. Tambien se replica en `localStorage` para que el dialogo de captura desde el operador use el mismo campo de vision.
+
+La seccion integra una vista de prueba de camara bajo demanda:
+
+- seleccionar una fuente y pulsar `Probar Camara` abre un stream local del navegador;
+- mover el slider actualiza el encuadre de esa vista al instante;
+- `Detener camara`, cambiar de fuente, salir de la seccion, volver a renderizar Ajustes o cerrar la pagina detiene los tracks;
+- la vista no inicia automaticamente, para evitar ocupar una camara durante la operacion normal.
+
+### Validacion de este corte
+
+Se validaron sintaxis y formato con:
+
+```bash
+node --check public/app.js
+git diff --check
+```
+
+La imagen local se reconstruyo y se recreo el contenedor `eolo-access-bridge`. Al cierre de la validacion, `docker compose ps` reporto Bridge y ANPR saludables, y `GET /api/health` respondio `ok: true`. La interfaz publicada en `http://localhost:8080/settings` mostro las fuentes locales detectadas, la vista de prueba, `Probar Camara` y `Detener camara`.
