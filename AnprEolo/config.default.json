@@ -6,14 +6,18 @@
       "rtsp": "rtsp://platerec:8S5AZ7YasGc3m4@video.platerecognizer.com:8554/demo",
       "type": "Entrada",
       "prefix": "ENT",
-      "barrier_ids": []
+      "barrier_ids": [],
+      "watchdog_enabled": true,
+      "watchdog_stale_seconds": 90
     },
     {
       "name": "DEMO_SALIDA",
       "rtsp": "rtsp://platerec:8S5AZ7YasGc3m4@video.platerecognizer.com:8554/demo",
       "type": "Salida",
       "prefix": "SAL",
-      "barrier_ids": []
+      "barrier_ids": [],
+      "watchdog_enabled": true,
+      "watchdog_stale_seconds": 90
     }
   ],
   "barriers": [],

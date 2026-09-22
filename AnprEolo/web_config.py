@@ -1,5 +1,6 @@
 from flask import Flask, request, render_template, redirect, url_for, Response, stream_with_context, jsonify, send_file
-import json, os, subprocess, signal, sys, threading, queue, time, requests, sqlite3, atexit, platform
+import json, os, subprocess, signal, sys, threading, queue, time, requests, sqlite3, atexit, platform, re
+from datetime import datetime, timezone
 from requests.auth import HTTPDigestAuth
 from bubble_config import (
     BUBBLE_HEADERS,
@@ -51,9 +52,28 @@ ANPR_CONTROL_BASE_URL = os.environ.get(
 ANPR_AUTOMATION_CALLBACK_URL = os.environ.get("ANPR_AUTOMATION_CALLBACK_URL", "").rstrip("/")
 app_process = None   # proceso global
 rtsp_process = None  # proceso global
+app_process_lock = threading.RLock()
+anpr_processor_expected_running = False
+anpr_processor_started_at = None
 worker_thread = None
 worker_stop_event = threading.Event()
 worker_started_at = None
+watchdog_thread = None
+watchdog_stop_event = threading.Event()
+watchdog_started_at = None
+
+ANPR_WATCHDOG_INTERVAL_SECONDS = 30
+ANPR_WATCHDOG_DEFAULT_STALE_SECONDS = 90
+ANPR_WATCHDOG_MIN_STALE_SECONDS = 30
+ANPR_WATCHDOG_MAX_STALE_SECONDS = 600
+ANPR_WATCHDOG_STARTUP_GRACE_SECONDS = 180
+anpr_watchdog_state = {
+    "lastCheckAt": None,
+    "lastRestartAt": None,
+    "lastReason": "",
+    "lastCamera": "",
+    "restartCount": 0,
+}
 
 # --- LOGS GLOBALES ---
 log_buffer = deque(maxlen=20)
@@ -358,6 +378,11 @@ def load_config():
                 data["auto_vehicle_events"] = False
             if "auto_vehicle_movements" not in data:
                 data["auto_vehicle_movements"] = False
+            for camera in data.get("cameras", []):
+                if "watchdog_enabled" not in camera:
+                    camera["watchdog_enabled"] = True
+                if "watchdog_stale_seconds" not in camera:
+                    camera["watchdog_stale_seconds"] = ANPR_WATCHDOG_DEFAULT_STALE_SECONDS
             return data
     except FileNotFoundError:
         return {
@@ -419,54 +444,64 @@ def normalize_permission_vehicle_payload(payload):
         }
     return list(vehicles_by_plate.values())
 
-def restart_main_app():
-    global app_process
+def restart_main_app(reason="manual"):
+    global app_process, anpr_processor_expected_running, anpr_processor_started_at
+    with app_process_lock:
+        anpr_processor_expected_running = True
+        anpr_processor_started_at = time.time()
+        if reason != "manual":
+            anpr_watchdog_state["lastRestartAt"] = utc_iso()
+            anpr_watchdog_state["lastReason"] = reason
+            anpr_watchdog_state["restartCount"] += 1
     # Si ya estaba corriendo, matarlo
-    if app_process and app_process.poll() is None:
-        print("Matando proceso anterior...")
-        app_process.terminate()
-        try:
-            app_process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            app_process.kill()
+        if app_process and app_process.poll() is None:
+            print("Matando proceso anterior...")
+            app_process.terminate()
+            try:
+                app_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                app_process.kill()
 
     # Lanzar de nuevo capturando salida
-    print("Iniciando app.py...")
+        print(f"Iniciando app.py ({reason})...")
     # -u para unbuffered output
-    env = os.environ.copy()
-    env["ANPR_DB_FILE"] = DB_FILE
-    env["ANPR_CONFIG_FILE"] = CONFIG_FILE
-    env["ANPR_CONTROL_BASE_URL"] = ANPR_CONTROL_BASE_URL
-    env["ANPR_AUTOMATION_CALLBACK_URL"] = ANPR_AUTOMATION_CALLBACK_URL
-    if getattr(sys, "frozen", False):
-        command = [sys.executable, "--anpr-worker"]
-        cwd = RUNTIME_DIR
-    else:
-        command = [sys.executable, "-u", MAIN_APP]
-        cwd = BASE_DIR
-    app_process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        cwd=cwd,
-        env=env
-    )
+        env = os.environ.copy()
+        env["ANPR_DB_FILE"] = DB_FILE
+        env["ANPR_CONFIG_FILE"] = CONFIG_FILE
+        env["ANPR_CONTROL_BASE_URL"] = ANPR_CONTROL_BASE_URL
+        env["ANPR_AUTOMATION_CALLBACK_URL"] = ANPR_AUTOMATION_CALLBACK_URL
+        if getattr(sys, "frozen", False):
+            command = [sys.executable, "--anpr-worker"]
+            cwd = RUNTIME_DIR
+        else:
+            command = [sys.executable, "-u", MAIN_APP]
+            cwd = BASE_DIR
+        app_process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            cwd=cwd,
+            env=env
+        )
 
     # Hilo para leer logs sin bloquear
-    t = threading.Thread(target=monitor_output, args=(app_process,), daemon=True)
-    t.start()
+        t = threading.Thread(target=monitor_output, args=(app_process,), daemon=True)
+        t.start()
+    return process_status(app_process)
 
 
 def stop_main_app():
-    global app_process
-    if app_process and app_process.poll() is None:
-        app_process.terminate()
-        try:
-            app_process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            app_process.kill()
+    global app_process, anpr_processor_expected_running
+    with app_process_lock:
+        anpr_processor_expected_running = False
+        if app_process and app_process.poll() is None:
+            app_process.terminate()
+            try:
+                app_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                app_process.kill()
     return process_status(app_process)
 
 
@@ -486,6 +521,160 @@ def process_status(proc):
         return {"running": False, "pid": None, "exitCode": None}
     code = proc.poll()
     return {"running": code is None, "pid": proc.pid, "exitCode": code}
+
+
+def normalize_boolean(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def normalize_watchdog_stale_seconds(value):
+    try:
+        seconds = int(float(value))
+    except (TypeError, ValueError):
+        seconds = ANPR_WATCHDOG_DEFAULT_STALE_SECONDS
+    return max(ANPR_WATCHDOG_MIN_STALE_SECONDS, min(ANPR_WATCHDOG_MAX_STALE_SECONDS, seconds))
+
+
+def parse_utc_timestamp(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def read_anpr_status_payload():
+    try:
+        with open(STATUS_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def camera_watchdog_enabled(camera):
+    return normalize_boolean(camera.get("watchdog_enabled"), True)
+
+
+def camera_watchdog_stale_seconds(camera):
+    return normalize_watchdog_stale_seconds(camera.get("watchdog_stale_seconds"))
+
+
+def anpr_watchdog_status():
+    return {
+        "running": bool(watchdog_thread and watchdog_thread.is_alive()),
+        "enabled": True,
+        "intervalSeconds": ANPR_WATCHDOG_INTERVAL_SECONDS,
+        "startedAt": watchdog_started_at,
+        **anpr_watchdog_state,
+    }
+
+
+def restart_anpr_from_watchdog(reason, camera_name=""):
+    now = time.time()
+    last_restart = parse_utc_timestamp(anpr_watchdog_state.get("lastRestartAt"))
+    if last_restart and now - last_restart < ANPR_WATCHDOG_INTERVAL_SECONDS:
+        return False
+    anpr_watchdog_state["lastCamera"] = camera_name
+    restart_main_app(reason)
+    return True
+
+
+def check_anpr_watchdog():
+    anpr_watchdog_state["lastCheckAt"] = utc_iso()
+    if not anpr_processor_expected_running:
+        anpr_watchdog_state["lastReason"] = "Procesador detenido por el usuario."
+        return
+
+    config = load_config()
+    cameras = [
+        camera for camera in config.get("cameras", [])
+        if camera.get("rtsp", camera.get("rtsp_url", "")) and camera_watchdog_enabled(camera)
+    ]
+    if not cameras:
+        anpr_watchdog_state["lastReason"] = "No hay camaras habilitadas para supervision."
+        return
+
+    processor = process_status(app_process)
+    if not processor["running"]:
+        restart_anpr_from_watchdog("El proceso ANPR no esta en ejecucion")
+        return
+
+    if anpr_processor_started_at and time.time() - anpr_processor_started_at < ANPR_WATCHDOG_STARTUP_GRACE_SECONDS:
+        anpr_watchdog_state["lastReason"] = "Esperando el inicio del procesador ANPR."
+        return
+
+    status_payload = read_anpr_status_payload()
+    if status_payload is None:
+        restart_anpr_from_watchdog("El archivo de estado ANPR no esta disponible")
+        return
+    statuses = status_payload.get("cameras", {}) if isinstance(status_payload, dict) else {}
+    now = time.time()
+    for camera in cameras:
+        camera_name = camera.get("name", "")
+        status = statuses.get(camera_name)
+        if not isinstance(status, dict):
+            restart_anpr_from_watchdog("No hay estado para la camara configurada", camera_name)
+            return
+        if status.get("capture_running") is False or status.get("processing_running") is False:
+            restart_anpr_from_watchdog("La captura o el procesamiento ANPR se detuvo", camera_name)
+            return
+        stale_after = camera_watchdog_stale_seconds(camera)
+        for timestamp_field, label in (("last_frame_at", "imagen"), ("last_prediction_at", "lectura")):
+            updated_at = parse_utc_timestamp(status.get(timestamp_field))
+            if updated_at is None or now - updated_at > stale_after:
+                restart_anpr_from_watchdog(
+                    f"La {label} de la camara no se actualiza dentro del tiempo configurado",
+                    camera_name
+                )
+                return
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(camera_name).strip()) or "camera"
+        snapshot_path = os.path.join(SNAPSHOT_DIR, f"{safe_name}.jpg")
+        try:
+            snapshot_age = now - os.path.getmtime(snapshot_path)
+        except OSError:
+            snapshot_age = stale_after + 1
+        if snapshot_age > stale_after:
+            restart_anpr_from_watchdog("La imagen de la camara no se actualiza", camera_name)
+            return
+
+    anpr_watchdog_state["lastReason"] = "Camaras ANPR operando normalmente."
+    anpr_watchdog_state["lastCamera"] = ""
+
+
+def anpr_watchdog_loop(stop_event):
+    print("[WATCHDOG] Supervisando ANPR cada 30 segundos.")
+    while not stop_event.is_set():
+        try:
+            check_anpr_watchdog()
+        except Exception as error:
+            anpr_watchdog_state["lastReason"] = f"Error al supervisar ANPR: {error}"
+            print(f"[WATCHDOG ERROR] {error}")
+        stop_event.wait(ANPR_WATCHDOG_INTERVAL_SECONDS)
+    print("[WATCHDOG] Supervisión ANPR detenida.")
+
+
+def start_anpr_watchdog():
+    global watchdog_thread, watchdog_stop_event, watchdog_started_at
+    if watchdog_thread and watchdog_thread.is_alive():
+        return anpr_watchdog_status()
+    watchdog_stop_event = threading.Event()
+    watchdog_thread = threading.Thread(target=anpr_watchdog_loop, args=(watchdog_stop_event,), daemon=True)
+    watchdog_thread.start()
+    watchdog_started_at = utc_iso()
+    return anpr_watchdog_status()
+
+
+def stop_anpr_watchdog():
+    if watchdog_thread and watchdog_thread.is_alive():
+        watchdog_stop_event.set()
+        watchdog_thread.join(timeout=5)
+    return anpr_watchdog_status()
 
 
 @app.route("/open/<id_barra>", methods=["POST"])
@@ -1344,6 +1533,8 @@ def safe_config_payload(config):
             "has_rtsp": bool(rtsp),
             "barrier_ids": linked_ids,
             "barrier_count": len(linked_ids),
+            "watchdog_enabled": camera_watchdog_enabled(camera),
+            "watchdog_stale_seconds": camera_watchdog_stale_seconds(camera),
         })
 
     public_barriers = []
@@ -1422,7 +1613,9 @@ def normalize_hardware_payload(payload):
             "rtsp": rtsp,
             "type": c_type if c_type in {"Entrada", "Salida"} else "Entrada",
             "prefix": prefix,
-            "barrier_ids": linked_barrier_ids
+            "barrier_ids": linked_barrier_ids,
+            "watchdog_enabled": normalize_boolean(raw.get("watchdog_enabled"), True),
+            "watchdog_stale_seconds": normalize_watchdog_stale_seconds(raw.get("watchdog_stale_seconds")),
         })
 
     barriers = []
@@ -1453,6 +1646,8 @@ def public_hardware_payload(config):
                 "prefix": camera.get("prefix", ""),
                 "rtsp": camera.get("rtsp", camera.get("rtsp_url", "")),
                 "barrier_ids": camera_barrier_ids(camera, barriers, barrier_ids),
+                "watchdog_enabled": camera_watchdog_enabled(camera),
+                "watchdog_stale_seconds": camera_watchdog_stale_seconds(camera),
             }
             for camera in config.get("cameras", [])
         ],
@@ -1646,7 +1841,8 @@ def api_health():
         "configFile": CONFIG_FILE,
         "statusFile": STATUS_FILE,
         "runtimeDir": RUNTIME_DIR,
-        "services": service_status_payload()
+        "services": service_status_payload(),
+        "watchdog": anpr_watchdog_status()
     })
 
 
@@ -1703,7 +1899,8 @@ def api_anpr_diagnostics():
             "status": path_access_diagnostic(STATUS_FILE),
             "snapshots": directory_access_diagnostic(SNAPSHOT_DIR),
         },
-        "services": service_status_payload()
+        "services": service_status_payload(),
+        "watchdog": anpr_watchdog_status()
     })
 
 
@@ -1727,6 +1924,7 @@ def api_dashboard():
         "config_file": CONFIG_FILE,
         "config": safe_config_payload(config),
         "services": service_status_payload(),
+        "watchdog": anpr_watchdog_status(),
         "logs": list(log_buffer),
     }
 
@@ -2035,6 +2233,7 @@ def api_service_action(service_id, action):
                 stop_main_app()
             if action in {"start", "restart"}:
                 restart_main_app()
+                start_anpr_watchdog()
         elif service_id == "rtsp-preview":
             if action in {"stop", "restart"}:
                 stop_rtsp_to_mse()
@@ -2155,6 +2354,7 @@ def delete_plate(placa):
 def start_services():
     """Endpoint para iniciar los servicios"""
     restart_main_app()
+    start_anpr_watchdog()
     start_background_worker()
     ejecutar_rtsp_to_mse()
     return redirect(url_for("index"))
@@ -2424,6 +2624,7 @@ def index():
 def _shutdown_app_process():
     """Mata el proceso de app.py al salir de web_config.py"""
     print("[SHUTDOWN] Deteniendo servicios ANPR...")
+    stop_anpr_watchdog()
     stop_background_worker()
     stop_rtsp_to_mse()
     stop_main_app()
@@ -2451,5 +2652,6 @@ if __name__ == "__main__":
     # Iniciar el servicio ANPR automáticamente al arrancar la aplicación
     print("[INICIO] Arrancando servicio ANPR automáticamente...")
     restart_main_app()
+    start_anpr_watchdog()
 
     app.run(host="0.0.0.0", port=ANPR_API_PORT, debug=False)

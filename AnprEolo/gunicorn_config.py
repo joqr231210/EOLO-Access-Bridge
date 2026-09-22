@@ -13,10 +13,11 @@ worker_class = "gthread"
 
 def post_fork(server, worker):
     """Hook ejecutado en el proceso hijo (worker) justo después del fork."""
-    from web_config import start_background_worker, restart_main_app
+    from web_config import start_anpr_watchdog, start_background_worker, restart_main_app
     start_background_worker()
     server.log.info(f"[GUNICORN] background_worker iniciado en worker PID {worker.pid}")
 
     # Iniciar el servicio ANPR automáticamente
     server.log.info("[GUNICORN] Arrancando servicio ANPR automáticamente...")
     restart_main_app()
+    start_anpr_watchdog()

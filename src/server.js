@@ -2002,6 +2002,39 @@ app.post(
   })
 );
 
+app.delete(
+  '/api/operator/pending-movements/:id',
+  requireOperatorSession,
+  asyncRoute(async (req, res) => {
+    const result = await withPendingOperatorMovementsLock(async () => {
+      const pending = await loadPendingOperatorMovements();
+      const item = pending.find((movement) => movement.id === req.params.id);
+      if (!item) return null;
+
+      const remaining = pending.filter((movement) => movement.id !== item.id);
+      await savePendingOperatorMovements(remaining);
+      await removePendingOperatorAsset(item).catch(() => {});
+      await log('warn', 'Movimiento pendiente descartado manualmente', {
+        pendingMovementId: item.id,
+        accessId: item.accessId,
+        controlPointId: item.controlPointId,
+        attempts: item.attempts || 0
+      });
+      return {
+        ok: true,
+        removedId: item.id,
+        pending: remaining.map(publicPendingOperatorMovement),
+        pendingCount: remaining.length
+      };
+    });
+    if (!result) {
+      res.status(404).json({ ok: false, error: 'Movimiento pendiente no encontrado.' });
+      return;
+    }
+    res.json(result);
+  })
+);
+
 app.post(
   '/api/operator/sync',
   requireOperatorSession,
@@ -7117,6 +7150,14 @@ function pendingOperatorMovementsPath() {
   return path.join(config.dataDir, 'operator-pending-movements.json');
 }
 
+let pendingOperatorMovementsQueue = Promise.resolve();
+
+function withPendingOperatorMovementsLock(operation) {
+  const result = pendingOperatorMovementsQueue.then(operation);
+  pendingOperatorMovementsQueue = result.catch(() => {});
+  return result;
+}
+
 function pendingOperatorAssetsDir() {
   return path.join(config.dataDir, 'operator-pending-assets');
 }
@@ -7242,9 +7283,11 @@ async function createPendingOperatorMovement(payload, accessId, controlPointId, 
     nextAttemptAt: now,
     lastError: error?.message || ''
   };
-  const items = await loadPendingOperatorMovements();
-  items.unshift(pending);
-  await savePendingOperatorMovements(items);
+  await withPendingOperatorMovementsLock(async () => {
+    const items = await loadPendingOperatorMovements();
+    items.unshift(pending);
+    await savePendingOperatorMovements(items);
+  });
   return pending;
 }
 
@@ -7315,7 +7358,11 @@ function publicPendingOperatorMovement(item) {
   };
 }
 
-async function syncPendingOperatorMovements(session, { force = false } = {}) {
+function syncPendingOperatorMovements(session, { force = false } = {}) {
+  return withPendingOperatorMovementsLock(() => syncPendingOperatorMovementsLocked(session, { force }));
+}
+
+async function syncPendingOperatorMovementsLocked(session, { force = false } = {}) {
   const startedAt = new Date();
   const items = await loadPendingOperatorMovements();
   const remaining = [];
@@ -7324,12 +7371,16 @@ async function syncPendingOperatorMovements(session, { force = false } = {}) {
   let stoppedByOffline = false;
 
   for (const item of items) {
+    if (!force && item.status === 'requires-action') {
+      remaining.push(item);
+      continue;
+    }
     if (!force && item.nextAttemptAt && Date.parse(item.nextAttemptAt) > startedAt.getTime()) {
       remaining.push(item);
       continue;
     }
-    const payload = await payloadForPendingOperatorMovement(item);
     try {
+      const payload = await payloadForPendingOperatorMovement(item);
       const createdMovement = await createOperatorCloudMovement(
         session,
         payload,
@@ -7339,17 +7390,19 @@ async function syncPendingOperatorMovements(session, { force = false } = {}) {
       synced.push({ id: item.id, movement: createdMovement });
       await removePendingOperatorAsset(item).catch(() => {});
     } catch (error) {
+      const retryable = !isPendingMovementAssetError(error) && isRetryableOperatorCloudError(error);
       const updated = {
         ...item,
+        status: retryable ? 'pending' : 'requires-action',
         attempts: Number(item.attempts || 0) + 1,
         lastAttemptAt: new Date().toISOString(),
-        nextAttemptAt: new Date(Date.now() + 60 * 1000).toISOString(),
+        nextAttemptAt: retryable ? new Date(Date.now() + 60 * 1000).toISOString() : null,
         lastError: error.message,
         updatedAt: new Date().toISOString()
       };
-      failed.push({ id: item.id, error: error.message, retryable: isRetryableOperatorCloudError(error) });
+      failed.push({ id: item.id, error: error.message, retryable });
       remaining.push(updated);
-      if (isRetryableOperatorCloudError(error)) {
+      if (retryable) {
         stoppedByOffline = true;
         const index = items.indexOf(item);
         remaining.push(...items.slice(index + 1));
@@ -7372,6 +7425,10 @@ async function syncPendingOperatorMovements(session, { force = false } = {}) {
     pending: remaining.map(publicPendingOperatorMovement),
     pendingCount: remaining.length
   };
+}
+
+function isPendingMovementAssetError(error = {}) {
+  return error.code === 'ENOENT' || /ENOENT: no such file or directory/i.test(String(error.message || ''));
 }
 
 async function payloadForPendingOperatorMovement(item) {
@@ -7412,7 +7469,13 @@ async function removePendingOperatorAsset(item) {
     ? item.companions.map((companion) => companion.photoFile).filter(Boolean)
     : [];
   const files = [item.photoFile, item.vehiclePhotoFile, ...companionFiles].filter(Boolean);
-  await Promise.all(files.map((file) => fs.promises.unlink(pendingOperatorAssetPath(file))));
+  await Promise.all(
+    files.map((file) =>
+      fs.promises.unlink(pendingOperatorAssetPath(file)).catch((error) => {
+        if (error.code !== 'ENOENT') throw error;
+      })
+    )
+  );
 }
 
 function isRetryableOperatorCloudError(error = {}) {

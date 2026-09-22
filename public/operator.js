@@ -1707,7 +1707,12 @@ function renderPendingMovements() {
   list.innerHTML = pending
     .map((item) => {
       const movement = item.movement || {};
-      const nextAttempt = item.nextAttemptAt ? `Próximo intento ${formatSyncDateTime(item.nextAttemptAt)}` : 'En espera';
+      const requiresAction = item.status === 'requires-action';
+      const nextAttempt = requiresAction
+        ? 'Requiere accion manual'
+        : item.nextAttemptAt
+          ? `Próximo intento ${formatSyncDateTime(item.nextAttemptAt)}`
+          : 'En espera';
       const error = item.lastError ? ` · ${item.lastError}` : '';
       return `
         <article class="pending-sync-item" data-pending-id="${escapeHtml(item.id)}">
@@ -1715,11 +1720,38 @@ function renderPendingMovements() {
             <strong>${escapeHtml(movement.visitor_name || 'Visitante')} · ${escapeHtml(movement.kind || 'Movimiento')}</strong>
             <span>${escapeHtml(formatSyncDateTime(item.createdAt))} · ${escapeHtml(nextAttempt)}${escapeHtml(error)}</span>
           </div>
-          <b>${escapeHtml(item.hasPhoto ? 'Foto guardada' : 'Sin foto')}</b>
+          <div class="pending-sync-actions">
+            <b>${escapeHtml(item.hasPhoto ? 'Foto guardada' : 'Sin foto')}</b>
+            <button type="button" class="danger" data-discard-pending-movement="${escapeAttr(item.id)}">Eliminar</button>
+          </div>
         </article>
       `;
     })
     .join('');
+}
+
+async function discardPendingMovement(id) {
+  const item = state.pendingMovements.find((movement) => movement.id === id);
+  if (!item) return;
+  const movement = item.movement || {};
+  const label = movement.visitor_name || movement.placa || 'este movimiento';
+  if (!window.confirm(`Eliminar ${label} de los pendientes? Esta accion tambien borra sus fotos locales y no se puede deshacer.`)) {
+    return;
+  }
+  const result = await api(`/api/operator/pending-movements/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+  state.pendingMovements = (result.pending || []).filter((pending) => {
+    if (state.activeAccess?.id && pending.accessId && pending.accessId !== state.activeAccess.id) return false;
+    if (state.activeControlPoint?.id && pending.controlPointId && pending.controlPointId !== state.activeControlPoint.id) return false;
+    return true;
+  });
+  renderPendingMovements();
+  showToast({
+    type: 'success',
+    title: 'Pendiente eliminado',
+    message: 'El movimiento no se volvera a intentar sincronizar.'
+  });
 }
 
 async function syncPendingMovements({ force = false, silent = false } = {}) {
@@ -3810,6 +3842,13 @@ function bindEvents() {
   $('#syncPendingNowBtn').addEventListener('click', () => {
     syncPendingMovements({ force: true }).catch((error) => {
       showToast({ type: 'error', title: 'No se pudo sincronizar', message: error.message });
+    });
+  });
+  $('#pendingSyncList').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-discard-pending-movement]');
+    if (!button) return;
+    discardPendingMovement(button.dataset.discardPendingMovement).catch((error) => {
+      showToast({ type: 'error', title: 'No se pudo eliminar el pendiente', message: error.message });
     });
   });
   $('#streamCameraPanel').addEventListener('change', (event) => {

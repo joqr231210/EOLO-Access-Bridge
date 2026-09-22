@@ -2278,3 +2278,13 @@ git diff --check
 ```
 
 La imagen local se reconstruyo y se recreo el contenedor `eolo-access-bridge`. Al cierre de la validacion, `docker compose ps` reporto Bridge y ANPR saludables, y `GET /api/health` respondio `ok: true`. La interfaz publicada en `http://localhost:8080/settings` mostro las fuentes locales detectadas, la vista de prueba, `Probar Camara` y `Detener camara`.
+
+## Actualizacion 2026-09-22 - Pendientes offline y supervision ANPR
+
+- En la lista de movimientos pendientes del operador se puede eliminar individualmente un registro con confirmacion. La eliminacion quita el pendiente y sus fotos locales disponibles; no elimina movimientos ya publicados en EOLO Cloud.
+- Si falta una foto local al sincronizar, el pendiente pasa a `requires-action`, conserva el error y deja de reintentarse automaticamente. El operador puede eliminarlo o forzar un reintento.
+- Las escrituras de la cola de pendientes se serializan para evitar que una sincronizacion simultanea restaure un registro eliminado o sobrescriba otro pendiente nuevo.
+- En `/settings > Vehiculos > Dispositivos`, cada camara tiene `watchdog_enabled` (activo por defecto) y `watchdog_stale_seconds` (90 s por defecto; rango 30-600 s). Ambos valores se guardan en la configuracion ANPR local.
+- El watchdog comprueba cada 30 s el proceso ANPR, los timestamps de captura y prediccion, y la fecha del snapshot JPEG. Respeta 180 s de gracia al arranque, reinicia ante proceso detenido, estado ausente o camara sin actualizaciones, y no revive un procesador detenido manualmente.
+- El estado del supervisor se expone en `GET /api/health` y `GET /api/dashboard` de ANPR bajo `watchdog`.
+- Para compilar el instalador en otro equipo Windows, actualizar `main` y ejecutar `npm ci` seguido de `npm run desktop:win:full`. Publicar este commit no modifica el manifiesto de actualizaciones automaticas ni genera el `.exe`.

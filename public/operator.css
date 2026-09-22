@@ -1468,6 +1468,25 @@ input.locked-field {
   gap: 8px;
 }
 
+.pending-sync-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pending-sync-actions .danger {
+  min-height: 30px;
+  border: 1px solid rgba(220, 38, 38, 0.28);
+  border-radius: 6px;
+  padding: 0 9px;
+  background: #fff1f2;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 750;
+}
+
 .access-picker-grid,
 .control-point-grid {
   display: grid;

@@ -1805,6 +1805,8 @@ function renderVehicleCamerasTable(cameras = []) {
 function renderVehicleCameraEditor(camera = emptyCamera()) {
   const barriers = anprHardware().barriers || [];
   const linkedIds = new Set(cameraBarrierIds(camera));
+  const watchdogEnabled = camera.watchdog_enabled !== false;
+  const watchdogStaleSeconds = normalizeCameraWatchdogSeconds(camera.watchdog_stale_seconds);
   return `
     <form class="hardware-form vehicle-camera-form" id="vehicleCameraForm">
       <div class="hardware-editor-block">
@@ -1827,6 +1829,18 @@ function renderVehicleCameraEditor(camera = emptyCamera()) {
           <label>
             Prefijo
             <input name="camera_prefix" value="${escapeAttr(camera.prefix || '')}" maxlength="3" placeholder="ENT" />
+          </label>
+          <label class="camera-watchdog-toggle">
+            Supervision ANPR
+            <span class="checkbox-control">
+              <input name="camera_watchdog_enabled" type="checkbox" ${watchdogEnabled ? 'checked' : ''} />
+              Reiniciar si deja de actualizar
+            </span>
+          </label>
+          <label>
+            Maximo sin imagen/lectura
+            <input name="camera_watchdog_stale_seconds" type="number" min="30" max="600" step="30" value="${watchdogStaleSeconds}" />
+            <small>Se valida cada 30 s.</small>
           </label>
           <div class="wide-field barrier-picker">
             <span>Barreras asociadas</span>
@@ -4613,7 +4627,21 @@ function renderBarrierHardwareEditor(hardware = anprHardware()) {
 }
 
 function emptyCamera() {
-  return { name: '', rtsp: '', type: 'Entrada', prefix: '', barrier_ids: [] };
+  return {
+    name: '',
+    rtsp: '',
+    type: 'Entrada',
+    prefix: '',
+    barrier_ids: [],
+    watchdog_enabled: true,
+    watchdog_stale_seconds: 90
+  };
+}
+
+function normalizeCameraWatchdogSeconds(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return 90;
+  return Math.max(30, Math.min(600, Math.round(seconds)));
 }
 
 function emptyBarrier() {
@@ -4622,6 +4650,8 @@ function emptyBarrier() {
 
 function renderCameraEditorRow(camera = emptyCamera(), index = 0, barriers = []) {
   const linkedIds = new Set(camera.barrier_ids || []);
+  const watchdogEnabled = camera.watchdog_enabled !== false;
+  const watchdogStaleSeconds = normalizeCameraWatchdogSeconds(camera.watchdog_stale_seconds);
   return `
     <div class="hardware-row camera-row" data-camera-row>
       <label>
@@ -4642,6 +4672,18 @@ function renderCameraEditorRow(camera = emptyCamera(), index = 0, barriers = [])
       <label>
         Prefijo
         <input name="camera_prefix_${index}" value="${escapeHtml(camera.prefix || '')}" maxlength="3" placeholder="ENT" />
+      </label>
+      <label class="camera-watchdog-toggle">
+        Supervision ANPR
+        <span class="checkbox-control">
+          <input name="camera_watchdog_enabled_${index}" type="checkbox" ${watchdogEnabled ? 'checked' : ''} />
+          Reiniciar si deja de actualizar
+        </span>
+      </label>
+      <label>
+        Maximo sin imagen/lectura
+        <input name="camera_watchdog_stale_seconds_${index}" type="number" min="30" max="600" step="30" value="${watchdogStaleSeconds}" />
+        <small>Se valida cada 30 s.</small>
       </label>
       <div class="wide-field barrier-picker">
         <span>Barreras asociadas</span>
@@ -5853,6 +5895,10 @@ function readAnprHardwareForm(form) {
       rtsp: row.querySelector('[name^="camera_rtsp_"]')?.value.trim() || '',
       type: row.querySelector('[name^="camera_type_"]')?.value || 'Entrada',
       prefix: row.querySelector('[name^="camera_prefix_"]')?.value.trim().toUpperCase() || '',
+      watchdog_enabled: Boolean(row.querySelector('[name^="camera_watchdog_enabled_"]')?.checked),
+      watchdog_stale_seconds: normalizeCameraWatchdogSeconds(
+        row.querySelector('[name^="camera_watchdog_stale_seconds_"]')?.value
+      ),
       barrier_ids: [...row.querySelectorAll('[data-camera-barrier-id]:checked')]
         .map((input) => input.dataset.cameraBarrierId)
         .filter(Boolean)
@@ -5883,6 +5929,10 @@ function readVehicleCameraForm(form) {
     rtsp: form.querySelector('[name="camera_rtsp"]')?.value.trim() || '',
     type: form.querySelector('[name="camera_type"]')?.value || 'Entrada',
     prefix: form.querySelector('[name="camera_prefix"]')?.value.trim().toUpperCase() || '',
+    watchdog_enabled: Boolean(form.querySelector('[name="camera_watchdog_enabled"]')?.checked),
+    watchdog_stale_seconds: normalizeCameraWatchdogSeconds(
+      form.querySelector('[name="camera_watchdog_stale_seconds"]')?.value
+    ),
     barrier_ids: [...form.querySelectorAll('[data-vehicle-camera-barrier-id]:checked')]
       .map((input) => input.dataset.vehicleCameraBarrierId)
       .filter(Boolean)

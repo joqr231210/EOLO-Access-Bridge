@@ -10,6 +10,7 @@ Servicio local para operar accesos EOLO desde una LAN. Incluye panel de operador
 - Seccion `Peatones` para administrar dispositivos locales de reconocimiento facial y permisos peatonales descargados desde EOLO Cloud.
 - Soporte multi-dispositivo para lectores faciales `Hikvision Mini Moe` y `Dahua ASI`, cada uno con configuracion, prueba de comunicacion, carga de usuarios y escucha de eventos.
 - Seccion `Vehiculos` para camaras ANPR, permisos vehiculares, estado de API ANPR, streams RTSP activos y ajustes del procesador ANPR.
+- Supervision ANPR por camara: verifica cada 30 segundos que el proceso, la captura, la prediccion y la imagen sigan actualizandose; el limite sin actividad se configura en `Vehiculos > Dispositivos`.
 - Seccion `Carriles` para modelar carriles vehiculares, peatonales o mixtos, vincular sus dispositivos locales y enviar apertura manual a la primera barrera asociada.
 - Seccion `Puertas y Barreras` para configurar barreras/puertas locales. El tipo disponible por ahora es `Hikvision ISAPI`.
 - Seccion `Visualizador RTC` para revisar el servicio de visualizacion en tiempo real.
@@ -19,6 +20,7 @@ Servicio local para operar accesos EOLO desde una LAN. Incluye panel de operador
 - Descarga de `PermisoAccesos` via Bubble Data API para el acceso activo, filtrando desde Cloud por `VigenciaFinal` futura y despues localmente por tipo de entidad.
 - Sincronizacion de permisos vehiculares vigentes hacia la tabla local ANPR: incorpora placas activas y elimina las que ya no existen en el snapshot de permisos.
 - Snapshot local de permisos en `data/operator-access-permissions.json`.
+- Los movimientos offline con archivos de foto faltantes quedan en `Requiere accion manual` y pueden eliminarse con confirmacion desde `Movimientos > Pendientes de sincronizar`.
 - Snapshot para carga a dispositivos faciales en `data/eolo-users-snapshot.json`, generado desde permisos peatonales activos.
 - Logs persistidos en `data/logs.jsonl`, consultables desde `/settings > Logs`; al hacer clic en el ultimo log se abre su detalle.
 - Autenticacion Digest fresca por peticion para equipos Hikvision/Dahua cuando aplica.
@@ -50,25 +52,30 @@ npm run desktop:mac:full
 Windows x64, desde una maquina Windows con Git, Node.js LTS y Python 3.11:
 
 ```powershell
-npm install
+git clone https://github.com/joqr231210/EOLO-Access-Bridge.git
+cd EOLO-Access-Bridge
+npm ci
 npm run desktop:win:full
 ```
+
+Si el repositorio ya existe en ese equipo, actualiza `main` con `git pull --ff-only origin main` antes de compilar.
 
 El instalador Windows queda en:
 
 ```text
-release\EOLO Access Bridge Setup 0.2.10.exe
+release\EOLO Access Bridge Setup 0.2.13.exe
 ```
 
 El instalador macOS queda en:
 
 ```text
-release/EOLO Access Bridge-0.2.10-arm64.dmg
+release/EOLO Access Bridge-0.2.13-arm64.dmg
 ```
 
 Notas:
 
 - El build Windows debe ejecutarse en Windows porque PyInstaller necesita binarios nativos de OpenCV/PyTorch/onnxruntime.
+- El `git push` publica el codigo fuente; no genera ni instala un `.exe` nuevo en Windows. El manifiesto de actualizaciones permanece en `0.2.10` hasta que se publique un instalador con SHA-256 real.
 - El equipo operativo solo necesita el instalador generado; no necesita Docker, Node ni Python.
 - Los datos locales quedan fuera de la app instalada:
   - Windows: `%APPDATA%\EOLO Access Bridge`
