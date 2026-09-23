@@ -1516,13 +1516,14 @@ input.locked-field {
 }
 
 .access-card {
-  min-height: 306px;
-  grid-template-rows: 132px auto minmax(28px, auto);
+  grid-template-rows: auto auto minmax(28px, auto);
+  align-content: start;
   padding: 16px;
 }
 
 .access-card-media {
-  min-height: 128px;
+  width: 100%;
+  aspect-ratio: 1;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -1531,13 +1532,11 @@ input.locked-field {
 }
 
 .access-card-media img {
-  width: auto;
-  height: auto;
-  max-width: 100%;
-  max-height: 100%;
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   object-position: center;
-  padding: 10px;
 }
 
 .access-card-media b {
