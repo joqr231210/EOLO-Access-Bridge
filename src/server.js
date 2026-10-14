@@ -57,6 +57,7 @@ let taskRunner = new TaskRunner(device, eoloClient);
 let eoloUserSync = new EoloUserSync(device, eoloClient, {
   runHandler: runEoloUserSyncForEligibleFaceDevices
 });
+let singleFaceDeviceSyncRunning = false;
 const serviceManager = new ServiceManager();
 let operatorId2CounterQueue = Promise.resolve();
 const facialMovementEventKeys = new Set();
@@ -459,6 +460,45 @@ app.get('/api/lanes', (_req, res) => {
   res.json({ ok: true, lanes: lanesWithStatus() });
 });
 
+app.get('/api/lanes/:id/logs', asyncRoute(async (req, res) => {
+  const lane = findLane(req.params.id);
+  const deviceIds = new Set(Object.values(lane.devices || {}).flat().map((id) => String(id).toLowerCase()));
+  const bridgeLogs = (await getStoredLogs(2000)).filter((record) => {
+    const meta = record.meta || {};
+    if (meta.laneId === lane.id) return true;
+    const references = [
+      meta.camera, meta.cameraName, meta.camera_name, meta.deviceId, meta.device_id,
+      meta.barrierId, meta.barrier_id, meta.barrier, meta.readerId, meta.reader_id,
+      ...(Array.isArray(meta.barrierIds) ? meta.barrierIds : [])
+    ];
+    return references.some((value) => value && deviceIds.has(String(value).toLowerCase()));
+  });
+  const anprDashboard = await fetchAnprJson('/api/dashboard', { timeoutMs: 5000 }).catch(() => null);
+  const hardwareNames = [...(lane.devices?.barriers || []), ...(lane.devices?.cameras || [])]
+    .map((id) => String(id)).filter((id) => id.length >= 3);
+  const anprLines = (anprDashboard?.logs || []).filter((line) => {
+    const text = String(line).toLowerCase();
+    return hardwareNames.some((id) => text.includes(id.toLowerCase()));
+  }).slice(-20);
+  const anprLogs = anprLines.map((line, index) => {
+    const message = String(line).trim().replace(/rtsp:\/\/[^\s@]+@/gi, 'rtsp://***@');
+    const nextTimedLine = anprLines.slice(index + 1).find((entry) => /^\[\d{2}:\d{2}:\d{2}\]/.test(String(entry)));
+    const timeMatch = (message.match(/^\[(\d{2}):(\d{2}):(\d{2})\]/) || String(nextTimedLine || '').match(/^\[(\d{2}):(\d{2}):(\d{2})\]/));
+    const date = new Date();
+    if (timeMatch) {
+      date.setUTCHours(Number(timeMatch[1]), Number(timeMatch[2]), Number(timeMatch[3]), 0);
+      if (date.getTime() > Date.now() + 300000) date.setUTCDate(date.getUTCDate() - 1);
+    }
+    const origin = hardwareNames.find((id) => message.toLowerCase().includes(id.toLowerCase())) || 'ANPR';
+    const level = /error|fallo|exception/i.test(message) ? 'error' : /warn|advertencia/i.test(message) ? 'warn' : 'info';
+    return { ts: date.toISOString(), level, source: 'ANPR', origin, message, meta: {} };
+  });
+  const logs = [...bridgeLogs.slice(0, 10), ...anprLogs]
+    .sort((a, b) => Date.parse(b.ts || 0) - Date.parse(a.ts || 0))
+    .slice(0, 10);
+  res.json({ ok: true, logs });
+}));
+
 app.post(
   '/api/lanes',
   asyncRoute(async (req, res) => {
@@ -544,6 +584,12 @@ app.put(
 app.put(
   '/api/device-config',
   asyncRoute(async (req, res) => {
+    if (req.body?.eolo?.access !== undefined &&
+        String(req.body.eolo.access).trim() !== config.eolo.access) {
+      const error = new Error('El acceso de sincronizacion solo puede cambiarse desde el logo del acceso en el panel de Operador.');
+      error.status = 409;
+      throw error;
+    }
     stopCurrentStream();
     const saved = await saveRuntimeConfig(req.body);
     rebuildDeviceClients();
@@ -728,17 +774,30 @@ app.post(
   asyncRoute(async (req, res) => {
     const target = findFaceDevice(req.params.id);
     ensureFaceDeviceSyncEligible(target);
-    const sync = new EoloUserSync(createFaceDeviceClient(target), eoloClient);
-    const result = await sync.applySnapshotToDevice();
-    await log('info', 'Snapshot EOLO cargado a dispositivo facial', {
-      deviceId: target.id,
-      type: target.type,
-      host: target.host,
-      created: result.created?.length || 0,
-      updated: result.updated?.length || 0,
-      deleted: result.deleted?.length || 0
-    });
-    res.json({ ok: true, result, devices: faceDevicesWithStatus() });
+    const accessId = String(req.body?.access || config.eolo.access || '').trim();
+    assertActiveSyncAccess(accessId);
+    if (singleFaceDeviceSyncRunning || eoloUserSync.running || eoloUserSync.deviceRunning) {
+      const error = new Error('Hay una sincronizacion de dispositivos en curso. Intenta de nuevo al terminar.');
+      error.status = 409;
+      throw error;
+    }
+    singleFaceDeviceSyncRunning = true;
+    try {
+      const snapshot = await prepareLocalFacialSnapshot(accessId);
+      const sync = new EoloUserSync(createFaceDeviceClient(target), eoloClient);
+      const result = await sync.applySnapshotToDevice({ snapshot, accessId });
+      await log('info', 'Snapshot EOLO cargado a dispositivo facial', {
+        deviceId: target.id,
+        type: target.type,
+        host: target.host,
+        created: result.created?.length || 0,
+        updated: result.updated?.length || 0,
+        deleted: result.deleted?.length || 0
+      });
+      res.json({ ok: result.ok, result, devices: faceDevicesWithStatus() });
+    } finally {
+      singleFaceDeviceSyncRunning = false;
+    }
   })
 );
 
@@ -894,6 +953,7 @@ app.post(
       userId: operatorSession?.userId
     });
     const accessId = String(req.body?.access || req.query.access || config.eolo.access || '').trim();
+    assertActiveSyncAccess(accessId);
     const result = await downloadEoloSnapshotFromOperatorPermissions({
       token: tokenContext.token,
       userId: tokenContext.userId,
@@ -906,8 +966,11 @@ app.post(
 
 app.post(
   '/api/eolo/users-sync/device-apply',
-  asyncRoute(async (_req, res) => {
-    const result = await applySnapshotToEligibleFaceDevices();
+  asyncRoute(async (req, res) => {
+    const accessId = String(req.body?.access || config.eolo.access || '').trim();
+    assertActiveSyncAccess(accessId);
+    const snapshot = await prepareLocalFacialSnapshot(accessId);
+    const result = await applySnapshotToEligibleFaceDevices({ snapshot, accessId });
     res.json(result);
   })
 );
@@ -1116,6 +1179,45 @@ app.get(
 );
 
 app.get(
+  '/api/operator/rtc-frame/:camera',
+  requireOperatorSession,
+  asyncRoute(async (req, res) => {
+    const cameras = await loadAnprRtspCameras();
+    const camera = cameras.find((item) => item.originalName === req.params.camera);
+    if (!camera) {
+      res.status(404).json({ ok: false, error: 'La camara no esta configurada para RTC.' });
+      return;
+    }
+    if (!(await isGo2rtcReachable())) {
+      res.status(503).json({ ok: false, error: 'El visualizador RTC no esta disponible.' });
+      return;
+    }
+
+    const frameUrl = new URL('/api/frame.mp4', config.anpr.webrtcApiUrl);
+    frameUrl.searchParams.set('src', camera.name);
+    let response;
+    try {
+      response = await fetch(frameUrl, { signal: AbortSignal.timeout(12000) });
+    } catch {
+      res.status(503).json({ ok: false, error: 'No se pudo capturar un fotograma del RTC.' });
+      return;
+    }
+    if (!response.ok || !response.headers.get('content-type')?.startsWith('video/mp4')) {
+      res.status(502).json({ ok: false, error: 'La camara RTC no entrego un fotograma de video.' });
+      return;
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length || buffer.length > 8 * 1024 * 1024) {
+      res.status(502).json({ ok: false, error: 'El fotograma RTC no tiene un tamano valido.' });
+      return;
+    }
+    res.type('video/mp4');
+    res.set('Cache-Control', 'no-store');
+    res.send(buffer);
+  })
+);
+
+app.get(
   '/api/operator/anpr-snapshots/:camera',
   requireOperatorSession,
   asyncRoute(async (req, res) => {
@@ -1247,6 +1349,7 @@ app.get(
         res.json({
           ok: true,
           source: 'cloud',
+          syncAccessId: config.eolo.access,
           accesses: cloudAccesses
         });
         return;
@@ -1260,6 +1363,7 @@ app.get(
     res.json({
       ok: true,
       source: 'local-fallback',
+      syncAccessId: config.eolo.access,
       accesses: [
         {
           id: configuredAccess || 'local-access',
@@ -1273,6 +1377,52 @@ app.get(
         }
       ]
     });
+  })
+);
+
+app.put(
+  '/api/operator/active-access',
+  requireOperatorSession,
+  asyncRoute(async (req, res) => {
+    const accessId = String(req.body?.accessId || '').trim();
+    if (!accessId) {
+      const error = new Error('Selecciona un acceso autorizado.');
+      error.status = 400;
+      throw error;
+    }
+    let accesses;
+    if (config.operator.authMode === 'cloud') {
+      accesses = await fetchOperatorCloudAccesses(req.operatorSession);
+    } else {
+      const payload = await fetchAnprJson('/api/config').catch(() => ({}));
+      const localConfig = payload.config || payload;
+      accesses = [{ id: localConfig.id_acceso || config.eolo.access || 'local-access' }];
+    }
+    const selected = accesses.find((access) => access.id === accessId && access.active !== false);
+    if (!selected) {
+      const error = new Error('El acceso seleccionado no esta autorizado para este operador.');
+      error.status = 403;
+      throw error;
+    }
+    if (config.eolo.access !== accessId) {
+      if (eoloUserSync.running || eoloUserSync.cloudRunning || eoloUserSync.deviceRunning || singleFaceDeviceSyncRunning) {
+        const error = new Error('Hay una sincronizacion en curso. Intenta cambiar de acceso al terminar.');
+        error.status = 409;
+        throw error;
+      }
+      const previousAccessId = config.eolo.access;
+      await saveRuntimeConfig({ eolo: { access: accessId } });
+      resetEoloUserSyncStatus();
+      eoloUserSync.restart();
+      facialMovementContextCache.clear();
+      facialMovementEventKeys.clear();
+      await log('info', 'Acceso activo y sincronizacion actualizados', {
+        previousAccessId,
+        accessId,
+        operatorUserId: req.operatorSession.userId || ''
+      });
+    }
+    res.json({ ok: true, accessId, syncAccessId: config.eolo.access });
   })
 );
 
@@ -2995,6 +3145,7 @@ async function runEoloUserSyncForEligibleFaceDevices(options = {}) {
   eoloUserSync.running = true;
   eoloUserSync.lastError = null;
   const startedAt = new Date().toISOString();
+  const accessId = config.eolo.access;
   try {
     const tokenContext = resolveEoloUserSyncToken({
       ...options,
@@ -3015,10 +3166,15 @@ async function runEoloUserSyncForEligibleFaceDevices(options = {}) {
       token: tokenContext.token,
       userId: tokenContext.userId,
       tokenSource: tokenContext.source,
-      accessId: config.eolo.access,
+      accessId,
       allowWhileFullRunning: true
     });
-    const device = await applySnapshotToEligibleFaceDevices({ allowWhileFullRunning: true });
+    if (config.eolo.access !== accessId) {
+      const error = new Error('El acceso cambio durante la descarga de permisos; se cancelo la carga a dispositivos.');
+      error.status = 409;
+      throw error;
+    }
+    const device = await applySnapshotToEligibleFaceDevices({ allowWhileFullRunning: true, accessId });
     const result = {
       ok: device.ok,
       startedAt,
@@ -3132,6 +3288,43 @@ async function downloadEoloSnapshotFromOperatorPermissions(options = {}) {
   }
 }
 
+async function prepareLocalFacialSnapshot(accessId) {
+  if (!accessId) {
+    const error = new Error('Selecciona un acceso antes de cargar permisos al dispositivo facial.');
+    error.status = 400;
+    throw error;
+  }
+  const local = readOperatorAccessPermissionsSnapshot(accessId);
+  if (!local || local.access !== accessId) {
+    const error = new Error('No hay permisos locales descargados para este acceso. Descargalos antes de cargar el dispositivo.');
+    error.status = 409;
+    throw error;
+  }
+  const employees = operatorAccessPermissionsToDeviceEmployees(local.permissions);
+  return eoloUserSync.writeCloudSnapshot({
+    permissions: local.permissions,
+    employees,
+    result: {
+      access: accessId,
+      completedAt: local.downloadedAt,
+      endpoint: 'operator-access-permissions.json',
+      sourceType: 'local-permission-snapshot',
+      sourceCount: local.sourceCount,
+      validAfter: local.validAfter,
+      skippedExpired: local.skippedExpired,
+      skippedInvalid: 0
+    }
+  });
+}
+
+function assertActiveSyncAccess(accessId) {
+  if (!accessId || accessId !== config.eolo.access) {
+    const error = new Error('El acceso solicitado no es el acceso activo. Seleccionalo desde el logo en el panel de Operador.');
+    error.status = 409;
+    throw error;
+  }
+}
+
 async function applySnapshotToEligibleFaceDevices(options = {}) {
   if (eoloUserSync.deviceRunning || (eoloUserSync.running && !options.allowWhileFullRunning)) {
     return { ok: true, skipped: true, reason: 'device-sync-running' };
@@ -3164,9 +3357,13 @@ async function applySnapshotToEligibleFaceDevices(options = {}) {
     for (const target of targets) {
       const sync = new EoloUserSync(createFaceDeviceClient(target), eoloClient);
       try {
-        const result = await sync.applySnapshotToDevice({ allowWhileFullRunning: true });
+        const result = await sync.applySnapshotToDevice({
+          allowWhileFullRunning: true,
+          snapshot: options.snapshot,
+          accessId: options.accessId || config.eolo.access
+        });
         results.push({
-          ok: true,
+          ok: result.ok,
           deviceId: target.id,
           type: target.type,
           name: target.name,
@@ -3477,6 +3674,14 @@ function resolveEoloUserSyncToken(options = {}) {
     source: allowSavedConfigFallback ? 'missing' : 'missing-active-operator-session',
     userId: ''
   };
+}
+
+function resetEoloUserSyncStatus() {
+  for (const key of [
+    'lastRunAt', 'lastResult', 'lastError',
+    'lastCloudRunAt', 'lastCloudResult', 'lastCloudError',
+    'lastDeviceRunAt', 'lastDeviceResult', 'lastDeviceError'
+  ]) eoloUserSync[key] = null;
 }
 
 function eoloUserSyncStatus() {

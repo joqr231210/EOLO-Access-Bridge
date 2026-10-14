@@ -93,6 +93,12 @@
         <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" />
         <circle cx="12" cy="13" r="3" />
       </symbol>
+      <symbol id="icon-trash-2" viewBox="0 0 24 24">
+        <path d="M3 6h18" />
+        <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+        <path d="m19 6-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6" />
+        <path d="M10 11v6m4-6v6" />
+      </symbol>
       <symbol id="icon-sliders" viewBox="0 0 24 24">
         <path d="M4 21v-7" />
         <path d="M4 10V3" />
@@ -282,7 +288,6 @@
             </div>
             <div class="operator-actions">
               <span class="sync-state" id="controlPointSourceState">Consultando EOLO</span>
-              <button class="ghost" type="button" id="backToAccessesBtn">Cambiar acceso</button>
               <button class="ghost" type="button" id="refreshControlPointsBtn">Actualizar</button>
               <div class="profile-menu" data-profile-menu>
                 <button class="avatar profile-trigger" type="button" aria-label="Perfil de usuario" data-profile-trigger>
@@ -919,10 +924,12 @@
               <div class="vehicle-photo-panel">
                 <div class="asset-placeholder" id="vehicleImageSlot">Sin Imagen</div>
                 <div class="asset-actions" id="vehiclePhotoActions">
-                  <button class="input-icon-button vehicle-camera-snapshot-btn" type="button" id="changeVehiclePhotoFromCameraBtn" title="Tomar foto desde cámara" aria-label="Tomar foto desde cámara">
+                  <button class="input-icon-button asset-camera-button" type="button" id="changeVehiclePhotoFromCameraBtn" title="Tomar foto desde cámara RTC" aria-label="Tomar foto desde cámara RTC">
                     <svg class="ui-icon" aria-hidden="true"><use href="#icon-camera"></use></svg>
                   </button>
-                  <button class="danger hidden" type="button" id="removeVehiclePhotoBtn">Eliminar</button>
+                  <button class="input-icon-button asset-remove-button hidden" type="button" id="removeVehiclePhotoBtn" title="Quitar foto del vehículo" aria-label="Quitar foto del vehículo">
+                    <svg class="ui-icon" aria-hidden="true"><use href="#icon-trash-2"></use></svg>
+                  </button>
                 </div>
               </div>
               <input name="vehicle_photo_data_url" id="vehiclePhotoDataUrl" type="hidden" />
@@ -933,9 +940,12 @@
               <div class="id-capture-panel">
                 <div class="asset-placeholder compact" id="idImageSlot">Sin Imagen</div>
                 <div class="asset-actions" id="idCaptureActions">
-                  <button class="ghost" type="button" id="openIdCameraBtn">Tomar foto</button>
-                  <button class="ghost hidden" type="button" id="retakeIdPhotoBtn">Cambiar</button>
-                  <button class="danger hidden" type="button" id="removeIdPhotoBtn">Eliminar</button>
+                  <button class="input-icon-button asset-camera-button" type="button" id="openIdCameraBtn" title="Tomar foto de identificación" aria-label="Tomar foto de identificación">
+                    <svg class="ui-icon" aria-hidden="true"><use href="#icon-camera"></use></svg>
+                  </button>
+                  <button class="input-icon-button asset-remove-button hidden" type="button" id="removeIdPhotoBtn" title="Quitar foto de identificación" aria-label="Quitar foto de identificación">
+                    <svg class="ui-icon" aria-hidden="true"><use href="#icon-trash-2"></use></svg>
+                  </button>
                 </div>
                 <p class="id-vision-state" id="idVisionState"></p>
               </div>
@@ -965,7 +975,7 @@
         <p>Asegure que la imagen tomada se vea clara y nítida</p>
         <div class="id-camera-actions">
           <button class="ghost" type="button" id="cancelIdCameraBtn">Cancelar</button>
-          <button class="primary" type="button" id="captureIdPhotoBtn">▣ Capturar</button>
+          <button class="primary" type="button" id="captureIdPhotoBtn">Capturar</button>
         </div>
       </section>
     </dialog>

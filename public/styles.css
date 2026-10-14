@@ -96,6 +96,12 @@ button {
   font-size: 13px;
 }
 
+.brand .settings-access-name {
+  margin-top: 5px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .nav {
   display: grid;
   gap: 6px;
@@ -3105,18 +3111,15 @@ button:disabled {
 
 .lane-topology-strip {
   display: flex;
-  align-items: stretch;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
   overflow-x: auto;
-  padding: 18px;
+  padding: 14px;
   border: 1px solid rgba(221, 226, 232, 0.94);
-  border-radius: 10px;
-  background:
-    linear-gradient(rgba(7, 71, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(7, 71, 255, 0.04) 1px, transparent 1px),
-    #f8fbff;
-  background-size: 18px 18px;
+  border-radius: 8px;
+  background: #f7f9fc;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
 .lane-card .lane-topology-strip {
@@ -3124,65 +3127,336 @@ button:disabled {
 }
 
 .lane-topology-strip.compact {
-  padding: 14px;
+  padding: 10px 12px;
 }
 
 .lane-node {
-  width: 154px;
-  min-height: 74px;
-  flex: 0 0 154px;
+  position: relative;
+  width: 224px;
+  min-height: 76px;
+  flex: 0 0 224px;
   display: grid;
   align-content: center;
-  gap: 4px;
-  border: 1px solid rgba(148, 163, 184, 0.34);
-  border-radius: 8px;
+  border: 1px solid #dfe5ed;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.lane-topology-strip.compact .lane-node {
+  width: 196px;
+  min-height: 72px;
+  flex-basis: 196px;
+}
+
+.lane-node-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 74px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+}
+
+.lane-topology-strip.compact .lane-node-main {
+  min-height: 70px;
+  padding: 8px 10px;
+}
+
+.lane-node-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  background: #e9f0ff;
+  color: #1f54ae;
+}
+
+.lane-topology-strip.compact .lane-node-icon {
+  flex-basis: 32px;
+  width: 32px;
+  height: 32px;
+}
+
+.lane-node.flow .lane-node-icon,
+.lane-node.sensor .lane-node-icon {
+  background: #e8f5ee;
+  color: #1c7855;
+}
+
+.lane-node.reader .lane-node-icon,
+.lane-node.turnstile .lane-node-icon {
+  background: #e5f5f5;
+  color: #126b74;
+}
+
+.lane-node.barrier .lane-node-icon,
+.lane-node.door .lane-node-icon {
+  background: #fff1e4;
+  color: #a65724;
+}
+
+.lane-node-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.lane-topology-strip button.lane-node-main {
+  cursor: pointer;
+  min-height: 74px;
+  border: 0;
+  border-radius: 6px;
+  padding: 10px 38px 10px 12px;
+  background: transparent;
+  color: inherit;
+  font-weight: inherit;
+  box-shadow: none;
+}
+
+.lane-topology-strip button.lane-node-main:hover,
+.lane-topology-strip button.lane-node-main:focus-visible {
+  background: #eef4ff;
+  box-shadow: none;
+}
+
+.lane-topology-strip button.lane-node-menu {
+  position: absolute;
+  top: 9px;
+  right: 7px;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.lane-node-menu svg,
+.lane-topology-add svg {
+  display: block;
+  margin: auto;
+}
+
+.lane-topology-strip button.lane-node-menu:hover,
+.lane-topology-strip button.lane-node-menu:focus-visible {
+  background: #e4ecfa;
+  box-shadow: none;
+}
+
+.lane-node-actions {
+  position: relative;
+  min-width: 0;
+  padding: 4px 8px 8px;
+  border-top: 1px solid var(--line);
+}
+
+.lane-node-actions[hidden] {
+  display: none;
+}
+
+.lane-node-actions button {
+  width: 100%;
+  min-height: 32px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--red-soft);
+  color: #b91c1c;
+  cursor: pointer;
+}
+
+.lane-topology-strip button.lane-topology-add {
+  align-self: center;
+  flex: 0 0 42px;
+  height: 42px;
+  min-height: 42px;
+  border: 1px dashed #98afd7;
+  border-radius: 6px;
+  padding: 0;
+  background: #fff;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.lane-topology-strip button.lane-topology-add:hover,
+.lane-topology-strip button.lane-topology-add:focus-visible {
+  border-style: solid;
+  background: #e9f0ff;
+}
+
+.lane-device-dialog {
+  width: min(92vw, 600px);
+  max-height: min(88vh, 820px);
+  overflow: auto;
+}
+
+.lane-device-dialog .modal-header h4 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.lane-dialog-body {
+  display: grid;
+  gap: 13px;
+  padding: 18px;
+}
+
+.lane-dialog-body p {
+  margin: 0;
+}
+
+.lane-dialog-body select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 10px;
+  background: #fff;
+}
+
+.lane-dialog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.lane-device-dialog .lane-dialog-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.lane-device-dialog .lane-dialog-check input {
+  width: auto;
+  min-height: auto;
+}
+
+.lane-dialog-fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
   padding: 10px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+}
+
+.lane-dialog-divider {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lane-device-dialog .form-actions {
+  margin: 0;
+  padding: 14px 18px;
+}
+
+@media (max-width: 560px) {
+  .lane-dialog-grid { grid-template-columns: 1fr; }
 }
 
 .lane-node.camera,
 .lane-node.reader {
-  border-color: rgba(7, 71, 255, 0.42);
+  border-color: #cad8f1;
 }
 
 .lane-node.barrier,
 .lane-node.relay,
 .lane-node.door,
 .lane-node.turnstile {
-  border-color: rgba(46, 168, 93, 0.38);
+  border-color: #dce3e5;
 }
 
-.lane-node span {
-  width: 22px;
-  height: 22px;
-  display: inline-grid;
-  place-items: center;
-  border-radius: 6px;
-  background: rgba(7, 71, 255, 0.09);
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.lane-node strong {
+.lane-node-copy strong {
   min-width: 0;
   color: var(--ink);
   font-size: 13px;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  line-height: 1.3;
 }
 
-.lane-node small {
+.lane-node-copy small {
   color: var(--muted);
   font-size: 11px;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  line-height: 1.3;
 }
 
 .lane-link {
-  width: 22px;
-  flex: 0 0 22px;
+  position: relative;
+  width: 24px;
+  flex: 0 0 24px;
   align-self: center;
-  border-top: 1px solid rgba(7, 71, 255, 0.38);
+  border-top: 1px solid #abc0df;
+}
+
+.lane-link::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: -3px;
+  width: 5px;
+  height: 5px;
+  border-top: 1px solid #abc0df;
+  border-right: 1px solid #abc0df;
+  transform: rotate(45deg);
+}
+
+.lane-detail-metrics .metric-strip {
+  grid-template-columns: repeat(2, minmax(0, 210px));
+}
+
+.lane-detail-metrics .metric-item {
+  min-height: 58px;
+}
+
+.lane-form-tabs {
+  margin-bottom: 14px;
+}
+
+.lane-form-panel[hidden] {
+  display: none;
+}
+
+.lane-form-grid.lane-form-general-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.lane-device-group .barrier-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+}
+
+.lane-device-group .barrier-checkbox input[type="checkbox"] {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.lane-device-group .barrier-checkbox span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .lane-form-grid {
@@ -3240,37 +3514,6 @@ button:disabled {
   font-size: 11px;
 }
 
-.lane-device-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 10px;
-}
-
-.lane-device-card {
-  min-height: 72px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  border: 1px solid rgba(221, 226, 232, 0.94);
-  border-radius: 8px;
-  padding: 12px;
-  background: #fff;
-}
-
-.lane-device-card strong,
-.lane-device-card span {
-  display: block;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.lane-device-card span {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 @media (max-width: 900px) {
   .lanes-main-header {
     flex-wrap: wrap;
@@ -3284,6 +3527,7 @@ button:disabled {
 
   .lanes-access-summary,
   .lane-form-grid,
+  .lane-form-grid.lane-form-general-grid,
   .lane-device-picker {
     grid-template-columns: 1fr;
   }
@@ -3294,5 +3538,33 @@ button:disabled {
 
   .lane-form .wide-field {
     grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .nav {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nav-group {
+    min-width: 0;
+  }
+
+  .lane-detail-metrics .metric-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .lane-detail-shell [data-lane-logs] {
+    min-width: 0;
+    overflow-x: auto;
+  }
+
+  .lane-form .form-actions {
+    flex-wrap: wrap;
+  }
+
+  .lane-node {
+    flex-basis: 200px;
+    width: 200px;
   }
 }

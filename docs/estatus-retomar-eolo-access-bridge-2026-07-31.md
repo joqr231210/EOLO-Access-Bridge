@@ -9,7 +9,7 @@ Ruta actual de trabajo:
 /Users/joqr231210/Documents/EOLO-Access-Bridge
 ```
 
-Nota de vigencia: este documento conserva historial tecnico. Para la superficie visible actual de `/settings` y `/operator`, tomar como referencia principal la seccion `Actualizacion 2026-09-21 - Carriles, automatizaciones y camara de identificaciones`.
+Nota de vigencia: este documento conserva historial tecnico. Para los cambios mas recientes de `/settings` y `/operator`, consultar tambien la seccion `Actualizacion 2026-10-13 - Carriles, acceso activo y capturas` al final.
 
 ## 1. Objetivo actual
 
@@ -2288,3 +2288,30 @@ La imagen local se reconstruyo y se recreo el contenedor `eolo-access-bridge`. A
 - El watchdog comprueba cada 30 s el proceso ANPR, los timestamps de captura y prediccion, y la fecha del snapshot JPEG. Respeta 180 s de gracia al arranque, reinicia ante proceso detenido, estado ausente o camara sin actualizaciones, y no revive un procesador detenido manualmente.
 - El estado del supervisor se expone en `GET /api/health` y `GET /api/dashboard` de ANPR bajo `watchdog`.
 - Para compilar el instalador en otro equipo Windows, actualizar `main` y ejecutar `npm ci` seguido de `npm run desktop:win:full`. Publicar este commit no modifica el manifiesto de actualizaciones automaticas ni genera el `.exe`.
+
+## Actualizacion 2026-10-13 - Carriles, acceso activo y capturas
+
+### Carriles
+
+- El detalle de carril muestra una topologia interactiva con iconos por tipo de dispositivo. El boton principal de cada nodo abre su configuracion; el menu del nodo permite desvincularlo con confirmacion; el boton `+` agrega un dispositivo registrado o un periferico declarativo.
+- Camaras RTSP/ANPR, lectores Hikvision y Dahua, y barreras Hikvision conservan sus entidades y configuraciones propias. Vincular o quitar un nodo solo cambia las referencias del carril; no elimina el dispositivo global.
+- `Editar Carril` separa nombre, codigo, tipo y direccion en `General`, y deja el resto en `Avanzado`. El detalle conserva solo la metrica de dispositivos vinculados.
+- `GET /api/lanes/:id/logs` devuelve hasta 10 logs recientes asociados al carril o sus dispositivos, combinando logs Bridge y lineas del dashboard ANPR cuando estan disponibles.
+
+### Operador y capturas
+
+- Una nueva sesion obliga a elegir un acceso autorizado. La eleccion se conserva al pasar del operador a `/settings` y viceversa, junto al punto de control si sigue activo y pertenece al mismo acceso.
+- El acceso se cambia desde el logo del operador. `PUT /api/operator/active-access` valida la autorizacion, actualiza `eolo.access` y reinicia el estado de sincronizacion; el campo de acceso en Ajustes queda de solo lectura.
+- La carga manual de usuarios faciales regenera el snapshot desde los permisos locales vigentes del acceso activo, rechaza snapshots de otro acceso y reporta fallas parciales de rostros. Las fotos Dahua se normalizan a JPEG de menos de 100 KB antes de enviarse.
+- La foto de entrada/salida de un movimiento se toma del RTC de la camara seleccionada mediante `GET /api/operator/rtc-frame/:camera`, protegido por sesion de operador. El icono de camara reemplaza la imagen actual y el icono de papelera la quita. La identificacion abre su propio modal de camara con sombreado fuera del recuadro de captura.
+
+### Instalador y validacion
+
+- Version de codigo fuente: `0.2.14`. Para crear el instalador Windows: actualizar `main`, ejecutar `npm ci` y `npm run desktop:win:full` desde Windows.
+- `updates/windows-latest.json` sigue en `0.2.10`; solo actualizarlo despues de compilar y publicar el nuevo `.exe` para registrar su URL final y SHA-256 real.
+- `npm ci` y las 5 pruebas `node --test tests/*.test.js` pasaron. La sintaxis de los archivos JS modificados y `git diff --check` tambien pasaron.
+- La imagen Docker Bridge se reconstruyo con `sharp 0.35.5`; dentro del contenedor pudo generar un JPEG. Bridge y ANPR llegaron a estado saludable. `GET /`, `GET /settings`, `GET /api/health` y `GET /api/lanes` respondieron 200; los logs de un carril existente respondieron 200 con 10 entradas; el endpoint RTC sin sesion respondio 401.
+- En navegador local se verificaron la lista/detalle de Carriles, las pestañas `General` y `Avanzado`, el modal de lector Dahua y la carga del panel de operador sin errores de consola.
+- `npm audit --omit=dev` reporto 0 vulnerabilidades tras actualizar dependencias compatibles. `npm audit` completo aun reporta 8 avisos moderados en dependencias transitivas de `electron-builder`; no afectan al paquete de produccion de Node, pero conviene reevaluarlos antes de distribuir el instalador.
+- El instalador Windows no se compilo en este Mac; requiere el proceso de build nativo en Windows para validar los sidecars ANPR y el `.exe` final.
+- La prueba con un lector Dahua real, una barrera y una camara RTC activa sigue pendiente si esos dispositivos no estan conectados durante la validacion local.

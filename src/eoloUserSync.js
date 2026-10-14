@@ -199,7 +199,18 @@ export class EoloUserSync {
     const startedAt = new Date().toISOString();
 
     try {
-      const snapshot = await this.readCloudSnapshot();
+      const snapshot = options.snapshot || await this.readCloudSnapshot();
+      if (!Array.isArray(snapshot.employees)) {
+        const error = new Error('El snapshot facial no contiene una lista valida de usuarios.');
+        error.status = 400;
+        throw error;
+      }
+      const expectedAccess = String(options.accessId || config.eolo.access || '').trim();
+      if (!expectedAccess || snapshot.access !== expectedAccess) {
+        const error = new Error('El snapshot facial no pertenece al acceso activo. Descarga los permisos de este acceso antes de cargar el dispositivo.');
+        error.status = 409;
+        throw error;
+      }
       const cloudEmployees = Array.isArray(snapshot.employees) ? snapshot.employees : [];
       const cloudByEmployeeNo = new Map(
         cloudEmployees.map((employee) => [employee.employeeNo, employee])
@@ -264,9 +275,10 @@ export class EoloUserSync {
       }
 
       result.completedAt = new Date().toISOString();
+      result.ok = result.skippedFaces.length === 0;
       this.lastDeviceRunAt = result.completedAt;
       this.lastDeviceResult = result;
-      await log('info', 'Carga de usuarios EOLO al dispositivo completada', result);
+      await log(result.ok ? 'info' : 'warn', 'Carga de usuarios EOLO al dispositivo completada', result);
       return result;
     } catch (error) {
       this.lastDeviceRunAt = new Date().toISOString();

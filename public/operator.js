@@ -332,7 +332,14 @@ async function restoreSession() {
     showOperator();
     await loadOperatorVisionConfig().catch(() => {});
     startCloudStatusTimer();
-    await loadAccesses();
+    try {
+      await loadAccesses({ restoreSessionSelection: true });
+    } catch (error) {
+      state.activeAccess = null;
+      state.activeControlPoint = null;
+      showAccessPicker();
+      $('#accessSourceState').textContent = error.message;
+    }
   } catch (_error) {
     clearStoredSession();
     showLogin();
@@ -617,6 +624,7 @@ async function login(event) {
     localStorage.setItem('eolo.operator.userId', state.userId);
     if (state.expiresAt) localStorage.setItem('eolo.operator.expiresAt', state.expiresAt);
     else localStorage.removeItem('eolo.operator.expiresAt');
+    clearStoredAccessContext();
     showOperator();
     await loadOperatorVisionConfig().catch(() => {});
     startCloudStatusTimer();
@@ -650,6 +658,7 @@ async function logout() {
 }
 
 function clearStoredSession() {
+  clearStoredAccessContext();
   localStorage.removeItem('eolo.operator.token');
   localStorage.removeItem('eolo.operator.userId');
   localStorage.removeItem('eolo.operator.expiresAt');
@@ -658,13 +667,34 @@ function clearStoredSession() {
   state.expiresAt = '';
 }
 
-async function loadAccesses() {
+function clearStoredControlPoint() {
+  localStorage.removeItem('eolo.operator.activeControlPointId');
+  localStorage.removeItem('eolo.operator.activeControlPointName');
+  localStorage.removeItem('eolo.operator.activeControlPointAccessId');
+}
+
+function clearStoredAccessContext() {
+  localStorage.removeItem('eolo.operator.activeAccessId');
+  localStorage.removeItem('eolo.operator.activeAccessName');
+  clearStoredControlPoint();
+}
+
+async function loadAccesses({ restoreSessionSelection = false } = {}) {
   const result = await api('/api/operator/accesses');
+  const previousAccessId = restoreSessionSelection
+    ? localStorage.getItem('eolo.operator.activeAccessId')
+    : state.activeAccess?.id;
+  const previousControlPointId = restoreSessionSelection
+    ? localStorage.getItem('eolo.operator.activeControlPointId')
+    : state.activeControlPoint?.id;
   state.accesses = result.accesses || [];
   state.accessSource = result.source || '';
-  state.activeAccess = null;
-  state.activeControlPoint = null;
-  state.controlPoints = [];
+  state.activeAccess = state.accesses.find((access) => access.id === previousAccessId && access.active !== false) || null;
+  if (!state.activeAccess) {
+    state.activeControlPoint = null;
+    state.controlPoints = [];
+    clearStoredAccessContext();
+  }
   state.controlPointSource = '';
   state.residents = [];
   state.residentCatalog = [];
@@ -675,7 +705,32 @@ async function loadAccesses() {
   state.pendingMovements = [];
   renderAccesses();
   renderPendingMovements();
-  showAccessPicker();
+  if (!restoreSessionSelection || !state.activeAccess) {
+    showAccessPicker();
+    return;
+  }
+  if (result.source !== 'cloud' || result.syncAccessId !== state.activeAccess.id) {
+    await api('/api/operator/active-access', {
+      method: 'PUT',
+      body: JSON.stringify({ accessId: state.activeAccess.id })
+    });
+  }
+  await loadOperatorVisionConfig().catch(() => {});
+  await loadControlPoints({ showPicker: false });
+  const savedPointAccessId = localStorage.getItem('eolo.operator.activeControlPointAccessId');
+  const pointIndex = savedPointAccessId === state.activeAccess.id
+    ? state.controlPoints.findIndex((point) => point.id === previousControlPointId && point.active !== false)
+    : -1;
+  if (pointIndex >= 0) {
+    await selectControlPoint(pointIndex).catch((error) => {
+      showMovementsShell();
+      $('#syncState').textContent = error.message;
+    });
+  } else {
+    clearStoredControlPoint();
+    showMovementsShell();
+    openControlPointDialog({ required: true });
+  }
 }
 
 function renderAccesses() {
@@ -801,14 +856,27 @@ function renderOperatorProfile() {
 }
 
 async function selectAccess(index) {
-  state.activeAccess = state.accesses[index] || null;
-  if (state.activeAccess?.id) {
-    localStorage.setItem('eolo.operator.activeAccessId', state.activeAccess.id);
-    localStorage.setItem('eolo.operator.activeAccessName', state.activeAccess.name || state.activeAccess.id);
-  } else {
-    localStorage.removeItem('eolo.operator.activeAccessId');
-    localStorage.removeItem('eolo.operator.activeAccessName');
+  const selected = state.accesses[index];
+  if (!selected?.id) return;
+  await api('/api/operator/active-access', {
+    method: 'PUT',
+    body: JSON.stringify({ accessId: selected.id })
+  });
+  if (state.activeAccess?.id === selected.id && state.activeControlPoint) {
+    state.activeAccess = selected;
+    localStorage.setItem('eolo.operator.activeAccessId', selected.id);
+    localStorage.setItem('eolo.operator.activeAccessName', selected.name || selected.id);
+    renderActiveAccessSidebar();
+    showMovements();
+    startAutoSync();
+    startPendingSyncTimer();
+    await loadMovements();
+    return;
   }
+  state.activeAccess = selected;
+  localStorage.setItem('eolo.operator.activeAccessId', selected.id);
+  localStorage.setItem('eolo.operator.activeAccessName', selected.name || selected.id);
+  clearStoredControlPoint();
   state.activeControlPoint = null;
   state.controlPoints = [];
   state.residents = [];
@@ -820,23 +888,17 @@ async function selectAccess(index) {
   applyInventorySummary(state.inventorySummary);
   renderPendingMovements();
   renderActiveAccessSidebar();
-  if (!state.activeAccess) return showAccessPicker();
   await loadOperatorVisionConfig().catch((error) => setMessage($('#visionConfigMessage'), error.message));
   await loadControlPoints();
   showMovementsShell();
   openControlPointDialog({ required: true });
 }
 
-function showAccessPicker(options = {}) {
+function showAccessPicker() {
   stopSettingsCamera();
   stopIdCamera();
   stopAnprDetectionTimer();
   closeEventDateOverlay();
-  if (options.clearControlPoint) {
-    state.activeControlPoint = null;
-    state.controlPoints = [];
-    state.controlPointSource = '';
-  }
   stopAutoSync();
   stopPendingSyncTimer();
   $('#accessPickerView').classList.remove('hidden');
@@ -918,7 +980,7 @@ function setActiveNav(view) {
   });
 }
 
-async function loadControlPoints() {
+async function loadControlPoints({ showPicker = true } = {}) {
   if (!state.activeAccess?.id) return;
   $('#controlPointSourceState').textContent = 'Consultando EOLO';
   const query = new URLSearchParams({ access: state.activeAccess.id });
@@ -926,7 +988,7 @@ async function loadControlPoints() {
   state.controlPoints = result.controlPoints || result.control_points || [];
   state.controlPointSource = result.source || '';
   renderControlPoints();
-  showControlPointPicker();
+  if (showPicker) showControlPointPicker();
 }
 
 function controlPointLabel(point) {
@@ -1004,6 +1066,9 @@ function renderControlPoints() {
 async function selectControlPoint(index) {
   state.activeControlPoint = state.controlPoints[index] || null;
   if (!state.activeControlPoint) return;
+  localStorage.setItem('eolo.operator.activeControlPointId', state.activeControlPoint.id);
+  localStorage.setItem('eolo.operator.activeControlPointName', controlPointLabel(state.activeControlPoint));
+  localStorage.setItem('eolo.operator.activeControlPointAccessId', state.activeAccess.id);
   state.controlPointSelectionRequired = false;
   if ($('#controlPointDialog').open) $('#controlPointDialog').close();
   renderActiveAccessSidebar();
@@ -1396,6 +1461,52 @@ function blobToDataUrl(blob) {
     reader.onerror = () => reject(reader.error || new Error('No se pudo leer la imagen.'));
     reader.readAsDataURL(blob);
   });
+}
+
+async function rtcFrameToDataUrl(blob) {
+  const video = document.createElement('video');
+  const objectUrl = URL.createObjectURL(blob);
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  try {
+    await new Promise((resolve, reject) => {
+      let timer;
+      const cleanup = () => {
+        clearTimeout(timer);
+        video.removeEventListener('loadeddata', onLoad);
+        video.removeEventListener('error', onError);
+      };
+      const onLoad = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error('El navegador no pudo decodificar el fotograma RTC.'));
+      };
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('La captura RTC tardo demasiado.'));
+      }, 8000);
+      video.addEventListener('loadeddata', onLoad);
+      video.addEventListener('error', onError);
+      video.src = objectUrl;
+      video.load();
+    });
+    if (!video.videoWidth || !video.videoHeight) {
+      throw new Error('La camara RTC no entrego una imagen valida.');
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    return canvas.toDataURL('image/jpeg', 0.86);
+  } finally {
+    video.removeAttribute('src');
+    video.load();
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function cameraByName(cameraName) {
@@ -2662,8 +2773,7 @@ function openMovementDialog(movement = null, { focusPlate = false, focusAction =
     button.disabled = !canChangeIdentification;
   });
   const hasIdentificationPhoto = Boolean(state.idPhotoDataUrl || state.idPhotoUrl || movement?.id_image);
-  $('#openIdCameraBtn').classList.toggle('hidden', !canChangeIdentification || hasIdentificationPhoto);
-  $('#retakeIdPhotoBtn').classList.toggle('hidden', !canChangeIdentification || !hasIdentificationPhoto);
+  $('#openIdCameraBtn').classList.toggle('hidden', !canChangeIdentification);
   $('#removeIdPhotoBtn').classList.toggle('hidden', !canChangeIdentification || !hasIdentificationPhoto);
   $$('#vehiclePhotoActions button').forEach((button) => {
     button.disabled = !canEditVehiclePhoto();
@@ -2916,7 +3026,7 @@ function renderVehiclePhoto(url = '') {
   $('#removeVehiclePhotoBtn').classList.toggle('hidden', !hasEditablePhoto || !canEditPhoto);
   const captureButton = $('#changeVehiclePhotoFromCameraBtn');
   captureButton.classList.toggle('hidden', !canEditPhoto);
-  captureButton.title = isExit ? 'Tomar foto de salida desde cámara' : 'Tomar foto de entrada desde cámara';
+  captureButton.title = `${displayUrl ? 'Reemplazar' : 'Tomar'} foto de ${isExit ? 'salida' : 'entrada'} desde cámara RTC`;
   captureButton.setAttribute('aria-label', captureButton.title);
 }
 
@@ -2939,9 +3049,12 @@ function renderIdPhoto(url = state.idPhotoDataUrl) {
   }
   $('#idPhotoDataUrl').value = state.idPhotoDataUrl || '';
   $('#idPhotoUrl').value = state.idPhotoUrl || '';
-  $('#openIdCameraBtn').classList.toggle('hidden', hasPhoto);
-  $('#retakeIdPhotoBtn').classList.toggle('hidden', !hasPhoto);
-  $('#removeIdPhotoBtn').classList.toggle('hidden', !hasPhoto);
+  const canChangeIdentification = !state.selectedMovement;
+  const cameraButton = $('#openIdCameraBtn');
+  cameraButton.classList.toggle('hidden', !canChangeIdentification);
+  cameraButton.title = hasPhoto ? 'Reemplazar foto de identificación' : 'Tomar foto de identificación';
+  cameraButton.setAttribute('aria-label', cameraButton.title);
+  $('#removeIdPhotoBtn').classList.toggle('hidden', !canChangeIdentification || !hasPhoto);
 }
 
 async function loadOperatorVisionConfig() {
@@ -3405,19 +3518,19 @@ async function changeVehiclePhotoFromCamera() {
   button.disabled = true;
   button.setAttribute('aria-busy', 'true');
   try {
-    const blob = await fetchOperatorBlob(`/api/operator/anpr-snapshots/${encodeURIComponent(cameraName)}?t=${Date.now()}`);
-    const dataUrl = await blobToDataUrl(blob);
+    const blob = await fetchOperatorBlob(`/api/operator/rtc-frame/${encodeURIComponent(cameraName)}?t=${Date.now()}`);
+    const dataUrl = await rtcFrameToDataUrl(blob);
     setVehiclePhoto(dataUrl, view);
     showToast({
       type: 'success',
       title: 'Foto capturada',
-      message: `Se tomo la foto ${view === 'exit' ? 'de salida' : 'de entrada'} desde ${cameraName}.`
+      message: `Se tomo la foto ${view === 'exit' ? 'de salida' : 'de entrada'} desde ${cameraName} (RTC).`
     });
   } catch (error) {
     showToast({
       type: 'error',
       title: 'No se pudo tomar la foto',
-      message: error.message || 'Verifica que el visualizador o el procesador ANPR esten activos.'
+      message: error.message || 'Verifica que la camara este disponible.'
     });
   } finally {
     button.removeAttribute('aria-busy');
@@ -3490,8 +3603,7 @@ function setMovementBusy(isBusy, title = 'Sincronizando con EOLO Cloud') {
       button.disabled = !canChangeIdentification;
     });
     const hasPhoto = Boolean(state.idPhotoDataUrl || state.idPhotoUrl || state.selectedMovement?.id_image);
-    $('#openIdCameraBtn').classList.toggle('hidden', !canChangeIdentification || hasPhoto);
-    $('#retakeIdPhotoBtn').classList.toggle('hidden', !canChangeIdentification || !hasPhoto);
+    $('#openIdCameraBtn').classList.toggle('hidden', !canChangeIdentification);
     $('#removeIdPhotoBtn').classList.toggle('hidden', !canChangeIdentification || !hasPhoto);
     $$('#vehiclePhotoActions button').forEach((button) => {
       button.disabled = !canEditVehiclePhoto();
@@ -3705,8 +3817,7 @@ function bindEvents() {
   $('#refreshAccessesBtn').addEventListener('click', () => loadAccesses().catch((error) => {
     $('#accessSourceState').textContent = error.message;
   }));
-  $('#activeAccessBrandBtn')?.addEventListener('click', () => showAccessPicker({ clearControlPoint: true }));
-  $('#activeAccessBtn').addEventListener('click', () => showAccessPicker({ clearControlPoint: true }));
+  $('#activeAccessBrandBtn')?.addEventListener('click', showAccessPicker);
   $('#activeControlPointBtn').addEventListener('click', openControlPointDialog);
   $$('[data-view]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -3770,7 +3881,6 @@ function bindEvents() {
     if (event.target.closest('#eventDateOverlay') || event.target.closest('#eventDateTrigger')) return;
     closeEventDateOverlay();
   });
-  $('#backToAccessesBtn').addEventListener('click', () => showAccessPicker({ clearControlPoint: true }));
   $('#refreshControlPointsBtn').addEventListener('click', () => loadControlPoints().catch((error) => {
     $('#controlPointSourceState').textContent = error.message;
   }));
@@ -4042,9 +4152,6 @@ function bindEvents() {
   $('#captureIdPhotoBtn').addEventListener('click', captureIdPhoto);
   $('#cancelIdCameraBtn').addEventListener('click', closeIdCameraDialog);
   $('#idCameraDialog').addEventListener('close', stopIdCamera);
-  $('#retakeIdPhotoBtn').addEventListener('click', () => {
-    openIdCamera({ type: 'visitor', index: -1 }).catch((error) => showToast({ type: 'error', title: 'No se pudo abrir la cámara', message: error.message }));
-  });
   $('#removeIdPhotoBtn').addEventListener('click', removeIdPhoto);
   $('#removeVehiclePhotoBtn').addEventListener('click', removeVehiclePhoto);
   $('#changeVehiclePhotoFromCameraBtn').addEventListener('click', changeVehiclePhotoFromCamera);

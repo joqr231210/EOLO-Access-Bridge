@@ -12,6 +12,7 @@ Servicio local para operar accesos EOLO desde una LAN. Incluye panel de operador
 - Seccion `Vehiculos` para camaras ANPR, permisos vehiculares, estado de API ANPR, streams RTSP activos y ajustes del procesador ANPR.
 - Supervision ANPR por camara: verifica cada 30 segundos que el proceso, la captura, la prediccion y la imagen sigan actualizandose; el limite sin actividad se configura en `Vehiculos > Dispositivos`.
 - Seccion `Carriles` para modelar carriles vehiculares, peatonales o mixtos, vincular sus dispositivos locales y enviar apertura manual a la primera barrera asociada.
+- En el detalle de cada carril, la topologia permite configurar camaras RTSP, lectores Hikvision/Dahua y barreras, asi como vincular o quitar dispositivos. Muestra los ultimos 10 logs asociados al carril.
 - Seccion `Puertas y Barreras` para configurar barreras/puertas locales. El tipo disponible por ahora es `Hikvision ISAPI`.
 - Seccion `Visualizador RTC` para revisar el servicio de visualizacion en tiempo real.
 - Seccion `Lectura de Identificaciones` para elegir camara local y configurar OpenAI Vision para extraer datos de una identificacion. Incluye el ajuste persistente de campo de vision y una vista de prueba de camara bajo demanda. La API key efectiva se resuelve por acceso activo (`Acceso.AuxKey1`) y cae a la key local si el acceso no tiene valor.
@@ -22,6 +23,10 @@ Servicio local para operar accesos EOLO desde una LAN. Incluye panel de operador
 - Snapshot local de permisos en `data/operator-access-permissions.json`.
 - Los movimientos offline con archivos de foto faltantes quedan en `Requiere accion manual` y pueden eliminarse con confirmacion desde `Movimientos > Pendientes de sincronizar`.
 - Snapshot para carga a dispositivos faciales en `data/eolo-users-snapshot.json`, generado desde permisos peatonales activos.
+- La carga manual a lectores faciales regenera ese snapshot desde los permisos locales vigentes del acceso seleccionado; rechaza un snapshot de otro acceso y reporta los rostros que no pudieron cargarse.
+- Una nueva sesion de operador exige elegir acceso; al volver de `/settings` se restauran acceso y punto de control si siguen autorizados. Cambiar de acceso desde el logo actualiza el acceso de sincronizacion y reinicia su estado sin reutilizar snapshots de otro acceso.
+- En el modal de movimiento, el boton de camara reemplaza la foto de entrada o salida con un fotograma del RTC de la camara seleccionada; la captura de identificacion conserva su propia vista previa. Cada imagen tiene una accion separada para quitarla.
+- Las fotos enviadas a Dahua se orientan y reducen a JPEG de menos de 100 KB para cumplir los limites de `FaceInfoManager`.
 - Logs persistidos en `data/logs.jsonl`, consultables desde `/settings > Logs`; al hacer clic en el ultimo log se abre su detalle.
 - Autenticacion Digest fresca por peticion para equipos Hikvision/Dahua cuando aplica.
 - Modo `MOCK_DEVICE=true` para desarrollo sin dispositivo.
@@ -63,19 +68,20 @@ Si el repositorio ya existe en ese equipo, actualiza `main` con `git pull --ff-o
 El instalador Windows queda en:
 
 ```text
-release\EOLO Access Bridge Setup 0.2.13.exe
+release\EOLO Access Bridge Setup 0.2.14.exe
 ```
 
 El instalador macOS queda en:
 
 ```text
-release/EOLO Access Bridge-0.2.13-arm64.dmg
+release/EOLO Access Bridge-0.2.14-arm64.dmg
 ```
 
 Notas:
 
 - El build Windows debe ejecutarse en Windows porque PyInstaller necesita binarios nativos de OpenCV/PyTorch/onnxruntime.
 - El `git push` publica el codigo fuente; no genera ni instala un `.exe` nuevo en Windows. El manifiesto de actualizaciones permanece en `0.2.10` hasta que se publique un instalador con SHA-256 real.
+- La version del codigo fuente es `0.2.14`. Para este corte, compila el instalador directamente despues de `git pull --ff-only origin main` y `npm ci`; no ejecutes `npm version patch` de nuevo antes de ese build.
 - El equipo operativo solo necesita el instalador generado; no necesita Docker, Node ni Python.
 - Los datos locales quedan fuera de la app instalada:
   - Windows: `%APPDATA%\EOLO Access Bridge`
@@ -97,18 +103,16 @@ https://raw.githubusercontent.com/joqr231210/EOLO-Access-Bridge/main/updates/win
 
 Si el manifiesto publica una version mayor, la app ofrece descargar el instalador, valida SHA-256 si viene incluido, y al elegir **Instalar ahora** cierra Bridge/ANPR de forma ordenada antes de abrir el setup.
 
-Para publicar una actualizacion despues de generar el instalador Windows y subirlo a GitHub Releases:
+Para publicar esta actualizacion, primero genera el instalador Windows `0.2.14` y subelo a GitHub Releases. Despues, en el equipo con el `.exe`:
 
 ```powershell
-npm version patch --no-git-tag-version
-npm run desktop:win:full
-npm run updates:win-manifest -- "release\EOLO Access Bridge Setup X.Y.Z.exe" "https://URL-publica/EOLO%20Access%20Bridge%20Setup%20X.Y.Z.exe"
-git add package.json package-lock.json updates/windows-latest.json
-git commit -m "Release EOLO Access Bridge X.Y.Z"
+npm run updates:win-manifest -- "release\EOLO Access Bridge Setup 0.2.14.exe" "https://URL-publica/EOLO%20Access%20Bridge%20Setup%200.2.14.exe"
+git add updates/windows-latest.json
+git commit -m "Publicar instalador EOLO Access Bridge 0.2.14"
 git push
 ```
 
-No actualices `updates/windows-latest.json` hasta tener la URL publica final del `.exe`; el script calcula el SHA-256 del instalador real.
+No actualices `updates/windows-latest.json` hasta tener la URL publica final del `.exe`; el script calcula el SHA-256 del instalador real. Para cortes futuros, incrementa la version con `npm version patch --no-git-tag-version` antes de compilar.
 
 En pilotos privados puedes apuntar a otro manifiesto antes de abrir la app:
 

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import DigestFetch from 'digest-fetch';
+import sharp from 'sharp';
 import { config, deviceBaseUrl } from './config.js';
 
 export class DahuaClient {
@@ -184,7 +185,7 @@ export class DahuaClient {
   }
 
   async uploadFace(employeeNo, filePath, metadata = {}) {
-    const image = await fs.promises.readFile(filePath);
+    const image = await prepareDahuaFacePhoto(await fs.promises.readFile(filePath));
     const photoData = image.toString('base64');
     const body = {
       UserID: String(employeeNo),
@@ -235,6 +236,21 @@ export class DahuaClient {
     };
     return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== ''));
   }
+}
+
+export async function prepareDahuaFacePhoto(image) {
+  const source = sharp(image).rotate().flatten({ background: '#ffffff' });
+  for (const quality of [80, 70, 60, 50]) {
+    const { data, info } = await source.clone()
+      .resize({ width: 500, height: 500, fit: 'inside' })
+      .jpeg({ quality })
+      .toBuffer({ resolveWithObject: true });
+    if (info.width < 150 || info.height < 300) {
+      throw new Error('La imagen de rostro no tiene proporciones compatibles con Dahua.');
+    }
+    if (data.length < 100 * 1024) return data;
+  }
+  throw new Error('No se pudo reducir la imagen de rostro a menos de 100 KB para Dahua.');
 }
 
 function assertDahuaSystemInfo(system = {}) {

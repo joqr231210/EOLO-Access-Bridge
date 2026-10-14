@@ -3020,26 +3020,6 @@ tbody tr:hover {
   transition: transform 160ms ease;
 }
 
-.id-camera-stage::before,
-.id-camera-stage::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  z-index: 1;
-  width: 14%;
-  background: rgba(0, 0, 0, 0.44);
-  pointer-events: none;
-}
-
-.id-camera-stage::before {
-  left: 0;
-}
-
-.id-camera-stage::after {
-  right: 0;
-}
-
 .id-guide-frame {
   position: absolute;
   inset: 24px 13%;
@@ -3047,7 +3027,7 @@ tbody tr:hover {
   border: 2px solid #21ff4b;
   border-radius: 7px;
   pointer-events: none;
-  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.44);
 }
 
 .id-guide-frame::before,
@@ -3189,6 +3169,7 @@ tbody tr:hover {
 .movement-side {
   display: grid;
   align-content: start;
+  grid-auto-rows: max-content;
   gap: 12px;
   border-left: 1px solid var(--line);
   background: #f5f7fb;
@@ -3668,36 +3649,43 @@ tbody tr:hover {
   background: #f8fafc;
 }
 
-#vehiclePhotoActions {
+#vehiclePhotoActions,
+#idCaptureActions {
   display: flex;
   justify-content: flex-end;
   align-items: center;
   gap: 6px;
 }
 
-#vehiclePhotoActions button {
-  min-height: 30px;
-  border-radius: 4px;
-  padding: 0 9px;
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-#vehiclePhotoActions .vehicle-camera-snapshot-btn {
+#vehiclePhotoActions button,
+#idCaptureActions button {
   width: 34px;
   min-width: 34px;
+  height: 32px;
   min-height: 32px;
+  border-radius: 4px;
   padding: 0;
 }
 
-#vehiclePhotoActions .vehicle-camera-snapshot-btn .ui-icon {
+#vehiclePhotoActions .ui-icon,
+#idCaptureActions .ui-icon {
   width: 17px;
   height: 17px;
 }
 
-#vehiclePhotoActions .danger {
-  min-width: 72px;
+#vehiclePhotoActions .asset-remove-button,
+#idCaptureActions .asset-remove-button {
+  border-color: rgba(220, 38, 38, 0.25);
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+#vehiclePhotoActions .asset-remove-button:hover,
+#vehiclePhotoActions .asset-remove-button:focus-visible,
+#idCaptureActions .asset-remove-button:hover,
+#idCaptureActions .asset-remove-button:focus-visible {
+  border-color: #b91c1c;
+  background: #ffe4e6;
 }
 
 .id-capture-panel {
@@ -3798,26 +3786,6 @@ tbody tr:hover {
 
 .id-capture-panel .asset-placeholder img {
   max-height: 180px;
-}
-
-#idCaptureActions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
-}
-
-#idCaptureActions button {
-  min-height: 30px;
-  border-radius: 4px;
-  padding: 0 9px;
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-#idCaptureActions .danger {
-  min-width: 72px;
 }
 
 @keyframes spin {
