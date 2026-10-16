@@ -1833,7 +1833,7 @@ function renderPendingMovements() {
           </div>
           <div class="pending-sync-actions">
             <b>${escapeHtml(item.hasPhoto ? 'Foto guardada' : 'Sin foto')}</b>
-            <button type="button" class="danger" data-discard-pending-movement="${escapeAttr(item.id)}">Eliminar</button>
+            <button type="button" class="danger" data-discard-pending-movement="${escapeHtml(item.id)}">Eliminar</button>
           </div>
         </article>
       `;

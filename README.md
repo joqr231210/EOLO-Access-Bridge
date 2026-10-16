@@ -60,6 +60,7 @@ Windows x64, desde una maquina Windows con Git, Node.js LTS y Python 3.11:
 git clone https://github.com/joqr231210/EOLO-Access-Bridge.git
 cd EOLO-Access-Bridge
 npm ci
+npm test
 npm run desktop:win:full
 ```
 
@@ -68,20 +69,20 @@ Si el repositorio ya existe en ese equipo, actualiza `main` con `git pull --ff-o
 El instalador Windows queda en:
 
 ```text
-release\EOLO Access Bridge Setup 0.2.14.exe
+release\EOLO Access Bridge Setup 0.2.15.exe
 ```
 
 El instalador macOS queda en:
 
 ```text
-release/EOLO Access Bridge-0.2.14-arm64.dmg
+release/EOLO Access Bridge-0.2.15-arm64.dmg
 ```
 
 Notas:
 
 - El build Windows debe ejecutarse en Windows porque PyInstaller necesita binarios nativos de OpenCV/PyTorch/onnxruntime.
 - El `git push` publica el codigo fuente; no genera ni instala un `.exe` nuevo en Windows. El manifiesto de actualizaciones permanece en `0.2.10` hasta que se publique un instalador con SHA-256 real.
-- La version del codigo fuente es `0.2.14`. Para este corte, compila el instalador directamente despues de `git pull --ff-only origin main` y `npm ci`; no ejecutes `npm version patch` de nuevo antes de ese build.
+- La version del codigo fuente es `0.2.15`. Para este corte, ejecuta `npm test` y compila el instalador despues de `git pull --ff-only origin main` y `npm ci`; no ejecutes `npm version patch` de nuevo antes de ese build.
 - El equipo operativo solo necesita el instalador generado; no necesita Docker, Node ni Python.
 - Los datos locales quedan fuera de la app instalada:
   - Windows: `%APPDATA%\EOLO Access Bridge`
@@ -103,16 +104,24 @@ https://raw.githubusercontent.com/joqr231210/EOLO-Access-Bridge/main/updates/win
 
 Si el manifiesto publica una version mayor, la app ofrece descargar el instalador, valida SHA-256 si viene incluido, y al elegir **Instalar ahora** cierra Bridge/ANPR de forma ordenada antes de abrir el setup.
 
-Para publicar esta actualizacion, primero genera el instalador Windows `0.2.14` y subelo a GitHub Releases. Despues, en el equipo con el `.exe`:
+Para publicar esta actualizacion, primero genera el instalador Windows `0.2.15` y subelo a GitHub Releases. Despues, en el equipo con el `.exe`:
 
 ```powershell
-npm run updates:win-manifest -- "release\EOLO Access Bridge Setup 0.2.14.exe" "https://URL-publica/EOLO%20Access%20Bridge%20Setup%200.2.14.exe"
+npm run updates:win-manifest -- "release\EOLO Access Bridge Setup 0.2.15.exe" "https://URL-publica/EOLO%20Access%20Bridge%20Setup%200.2.15.exe"
 git add updates/windows-latest.json
-git commit -m "Publicar instalador EOLO Access Bridge 0.2.14"
+git commit -m "Publicar instalador EOLO Access Bridge 0.2.15"
 git push
 ```
 
 No actualices `updates/windows-latest.json` hasta tener la URL publica final del `.exe`; el script calcula el SHA-256 del instalador real. Para cortes futuros, incrementa la version con `npm version patch --no-git-tag-version` antes de compilar.
+
+### Verificacion de pendientes en Windows
+
+Antes de instalar `0.2.15` en un equipo con pendientes, cierra Bridge y respalda completa la carpeta `%APPDATA%\EOLO Access Bridge\data`. Contiene la cola `operator-pending-movements.json`, sus fotos en `operator-pending-assets` y datos personales; manten el respaldo en un lugar privado.
+
+Tras instalar, abre `Movimientos > Movimientos por sincronizar` y comprueba que cada registro muestre su propio boton `Eliminar`. Antes de descartarlo, confirma en EOLO Cloud que el movimiento ya existe con el mismo acceso y folio `ID2`, y revisa sus datos/fotos. Elimina un pendiente a la vez, acepta la confirmacion, recarga la vista y verifica que solo ese registro desaparecio; la accion no borra el movimiento cloud. Si no existe en Cloud o le faltan datos, no lo descartes: recupera primero la foto o resuelve el registro manualmente.
+
+Este corte repara la lista y el boton de descarte; no recupera archivos de foto faltantes ni cambia las reglas de sincronizacion.
 
 En pilotos privados puedes apuntar a otro manifiesto antes de abrir la app:
 

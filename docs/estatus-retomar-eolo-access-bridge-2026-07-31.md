@@ -1,7 +1,7 @@
 # Estatus para retomar - EOLO Access Bridge
 
 Fecha original de corte: 2026-07-31
-Ultima actualizacion: 2026-09-01 19:15 CST
+Ultima actualizacion: 2026-10-16
 Proyecto: servicio local EOLO Access Bridge con operador, eventos, Peatones, Vehiculos, puertas/barreras, ANPR y sincronizacion EOLO Cloud
 Ruta actual de trabajo:
 
@@ -9,7 +9,7 @@ Ruta actual de trabajo:
 /Users/joqr231210/Documents/EOLO-Access-Bridge
 ```
 
-Nota de vigencia: este documento conserva historial tecnico. Para los cambios mas recientes de `/settings` y `/operator`, consultar tambien la seccion `Actualizacion 2026-10-13 - Carriles, acceso activo y capturas` al final.
+Nota de vigencia: este documento conserva historial tecnico. Para los cambios mas recientes de `/settings` y `/operator`, consultar tambien las actualizaciones de octubre al final.
 
 ## 1. Objetivo actual
 
@@ -2315,3 +2315,14 @@ La imagen local se reconstruyo y se recreo el contenedor `eolo-access-bridge`. A
 - `npm audit --omit=dev` reporto 0 vulnerabilidades tras actualizar dependencias compatibles. `npm audit` completo aun reporta 8 avisos moderados en dependencias transitivas de `electron-builder`; no afectan al paquete de produccion de Node, pero conviene reevaluarlos antes de distribuir el instalador.
 - El instalador Windows no se compilo en este Mac; requiere el proceso de build nativo en Windows para validar los sidecars ANPR y el `.exe` final.
 - La prueba con un lector Dahua real, una barrera y una camara RTC activa sigue pendiente si esos dispositivos no estan conectados durante la validacion local.
+
+## Actualizacion 2026-10-16 - Descarte de movimientos pendientes (v0.2.15)
+
+- Se corrigio la referencia a `escapeAttr` inexistente en `public/operator.js`: la lista usa `escapeHtml` para el atributo del boton `Eliminar`. Con uno o varios pendientes, la lista ya no debe interrumpirse al dibujarse y cada pendiente debe ofrecer su propia accion de descarte.
+- Se agrego una prueba de regresion que ejecuta el render de dos pendientes, incluido uno `requires-action` y un identificador con comillas.
+- Esta correccion es solo de interfaz. `DELETE /api/operator/pending-movements/:id` sigue quitando de forma irreversible el registro de la cola y sus fotos locales, sin borrar ni verificar movimientos en Cloud.
+- Antes de descartar en el equipo afectado: cerrar Bridge, respaldar `%APPDATA%\EOLO Access Bridge\data`, verificar en Cloud el mismo acceso y folio `ID2`, y eliminar uno por uno. Tras cada eliminacion, recargar y confirmar que solo desaparecio el pendiente esperado.
+- Si Cloud no tiene el movimiento, o el registro publicado esta incompleto, no descartarlo. El `ENOENT` de una foto local ocurre antes de llamar a Cloud y este corte no recupera esa foto. No se ha confirmado en el equipo Windows por que desaparecio el archivo.
+- La sincronizacion borra actualmente las fotos de un elemento exitoso antes de guardar la cola actualizada; una interrupcion en ese intervalo puede dejar una referencia a un archivo ausente. Queda como riesgo a corregir por separado junto con la reconciliacion por folio antes de reintentar o descartar.
+- Version fuente e instalador Windows previstos: `0.2.15`. El manifiesto `updates/windows-latest.json` sigue en `0.2.10` hasta disponer del instalador publicado y su SHA-256 real.
+- Validacion local: `npm ci`, `npm test` (6/6), `node --check public/operator.js`, `git diff --check` y `npm audit --omit=dev` (0 vulnerabilidades) pasaron. La compilacion y prueba del instalador en el Windows afectado siguen pendientes.

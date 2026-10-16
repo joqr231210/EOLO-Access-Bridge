@@ -1,6 +1,6 @@
 {
   "name": "eolo-access-bridge",
-  "version": "0.2.14",
+  "version": "0.2.15",
   "description": "Bridge local EOLO para operar accesos, ANPR, camaras y terminales ISAPI.",
   "author": "EOLO",
   "type": "module",
@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "test": "node --test",
     "sidecars:prepare": "node scripts/prepare-desktop-sidecars.mjs",
     "anpr:build": "bash scripts/build-anpr-sidecar.sh",
     "anpr:build:win": "powershell -ExecutionPolicy Bypass -File scripts/build-anpr-sidecar.ps1",
