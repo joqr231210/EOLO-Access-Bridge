@@ -1,6 +1,5 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const APP_VERSION_LABEL = 'v0.2.10';
 
 const state = {
   token: localStorage.getItem('eolo.operator.token') || '',
@@ -508,11 +507,12 @@ function setLoginSignal(selector, status, label, detail = '') {
   node.title = detail || label;
 }
 
-function updateLoginVersion(operatorConfig = {}) {
+function updateLoginVersion(bridgeVersion, operatorConfig = {}) {
   const node = $('#loginVersionLabel');
-  if (!node) return;
+  if (!node || !bridgeVersion) return;
   const branch = loginCloudBranchLabel(operatorConfig);
-  node.textContent = branch ? `${APP_VERSION_LABEL} - ${branch}` : APP_VERSION_LABEL;
+  const versionLabel = `v${String(bridgeVersion).replace(/^v/i, '')}`;
+  node.textContent = branch ? `${versionLabel} - ${branch}` : versionLabel;
 }
 
 function loginCloudBranchLabel(operatorConfig = {}) {
@@ -528,7 +528,7 @@ async function refreshLoginSignals() {
   setLoginSignal('#loginAnprSignal', 'checking', 'ANPR', 'Consultando API ANPR...');
   try {
     const result = await api('/api/operator/login-status', { silent: true });
-    updateLoginVersion(result.operator);
+    updateLoginVersion(result.bridge?.version, result.operator);
     setLoginSignal(
       '#loginBridgeSignal',
       'online',

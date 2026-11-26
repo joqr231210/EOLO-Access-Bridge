@@ -23,6 +23,12 @@ import { ServiceManager, remoteAnprService } from './serviceManager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '../public');
+const bridgeVersion = String(
+  JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf8')).version
+);
+const operatorHtml = fs
+  .readFileSync(path.join(publicDir, 'operator.html'), 'utf8')
+  .replaceAll('__EOLO_APP_VERSION__', `v${bridgeVersion}`);
 
 await loadRuntimeConfig();
 await ensureDataDirs();
@@ -76,7 +82,8 @@ app.use(
 );
 
 app.get('/', (_req, res) => {
-  res.sendFile(path.join(publicDir, 'operator.html'));
+  res.set('Cache-Control', 'no-store');
+  res.type('html').send(operatorHtml);
 });
 
 app.get('/settings', (_req, res) => {
@@ -2378,7 +2385,8 @@ app.get(
       operator: await publicOperatorCloudConfig(),
       bridge: {
         online: true,
-        checkedAt
+        checkedAt,
+        version: bridgeVersion
       },
       cloud,
       anpr

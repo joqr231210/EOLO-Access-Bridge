@@ -5,6 +5,7 @@ Servicio local para operar accesos EOLO desde una LAN. Incluye panel de operador
 ## Funciones incluidas
 
 - Panel de operador en `http://localhost:8080` para login EOLO, seleccion de acceso/punto de control, movimientos, eventos y ajustes.
+- El login muestra la version local desde `package.json` y la rama cloud por separado. Al preparar una nueva version, actualiza `package.json` y `package-lock.json` con `npm version patch --no-git-tag-version`; el login y el instalador tomaran la misma version sin editar textos fijos.
 - Seccion `Eventos` para auditoria local de detecciones y operaciones de puerta, con busqueda, rango de fechas, filtros y metricas.
 - Creacion automatica de eventos locales cuando el operador registra movimientos desde el panel de Movimientos.
 - Seccion `Peatones` para administrar dispositivos locales de reconocimiento facial y permisos peatonales descargados desde EOLO Cloud.
