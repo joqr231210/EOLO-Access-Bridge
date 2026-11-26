@@ -24,3 +24,4 @@ AnprEolo/stream/pinggy.bat
 # Heavy model/runtime artifacts
 AnprEolo/__pycache__/
 AnprEolo/**/__pycache__/
+scripts/__pycache__/

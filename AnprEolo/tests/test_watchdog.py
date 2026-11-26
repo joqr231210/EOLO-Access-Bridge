@@ -50,6 +50,17 @@ class AnprWatchdogTest(unittest.TestCase):
         anpr.check_anpr_watchdog()
         self.restart.assert_called_once_with("El proceso ANPR no esta en ejecucion")
 
+    def test_model_load_failure_keeps_diagnostic_without_restart_loop(self):
+        self.status.return_value["cameras"]["ENTRADA"].update({
+            "models_loaded": False,
+            "processing_running": False,
+            "model_load_stage": "fallo",
+            "processing_error": "Error al cargar modelos: archivo ausente",
+        })
+        anpr.check_anpr_watchdog()
+        self.restart.assert_not_called()
+        self.assertIn("Error al cargar modelos", anpr.anpr_watchdog_state["lastReason"])
+
     def test_disabled_camera_does_not_restart(self):
         self.config.return_value["cameras"][0]["watchdog_enabled"] = False
         anpr.check_anpr_watchdog()

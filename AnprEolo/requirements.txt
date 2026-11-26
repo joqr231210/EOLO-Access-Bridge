@@ -1,5 +1,5 @@
 ultralytics
-fast-plate-ocr[onnx]
+fast-plate-ocr[onnx]==1.1.0
 opencv-python
 numpy
 requests

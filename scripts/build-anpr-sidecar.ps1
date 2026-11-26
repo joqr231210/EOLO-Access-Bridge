@@ -22,11 +22,16 @@ $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $PyInstaller = Join-Path $VenvDir "Scripts\pyinstaller.exe"
 
 & $VenvPython -m pip install --upgrade pip setuptools wheel
+if ($LASTEXITCODE -ne 0) { throw "No se pudieron actualizar las herramientas de Python." }
 & $VenvPython -m pip install -r (Join-Path $AnprDir "requirements.txt") pyinstaller
+if ($LASTEXITCODE -ne 0) { throw "No se pudieron instalar las dependencias ANPR." }
+& $VenvPython (Join-Path $RootDir "scripts\verify-anpr-assets.py")
+if ($LASTEXITCODE -ne 0) { throw "No se pudieron verificar los modelos ANPR." }
 
 Push-Location $AnprDir
 try {
   & $PyInstaller --clean --noconfirm anpr-sidecar.spec
+  if ($LASTEXITCODE -ne 0) { throw "No se pudo compilar el sidecar ANPR." }
 } finally {
   Pop-Location
 }

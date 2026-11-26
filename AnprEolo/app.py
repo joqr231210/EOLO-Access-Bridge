@@ -11,6 +11,7 @@ import re
 from fast_plate_ocr import LicensePlateRecognizer
 import os, sys
 import json, sqlite3
+import tempfile
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RESOURCE_DIR = getattr(sys, "_MEIPASS", BASE_DIR)
@@ -61,6 +62,10 @@ FPS_PROCESAR = 15
 CACHE_TIEMPO_SEGUNDOS = 25
 YOLO_MODEL_PATH = os.environ.get("ANPR_PLATE_MODEL_FILE", resource_path("model.pt"))
 YOLO_MODEL_VEHICLE_PATH = os.environ.get("ANPR_VEHICLE_MODEL_FILE", resource_path("best.pt"))
+OCR_MODEL_PATH = os.environ.get("ANPR_OCR_MODEL_FILE", resource_path("cct_s_v2_global.onnx"))
+OCR_PLATE_CONFIG_PATH = os.environ.get(
+    "ANPR_OCR_PLATE_CONFIG_FILE", resource_path("cct_s_v2_global_plate_config.yaml")
+)
 
 # --- Cargar configuración ---
 def load_config():
@@ -104,11 +109,29 @@ def describir_error_archivo(error, file_path, operation):
     }
 
 def escribir_json_atomico(file_path, payload):
-    tmp_path = f"{file_path}.tmp"
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False)
-    os.replace(tmp_path, file_path)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f"{os.path.basename(file_path)}.", suffix=".tmp", dir=os.path.dirname(file_path)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        for delay in (0.05, 0.1, 0.2, 0.4, 0.8, 0):
+            try:
+                os.replace(tmp_path, file_path)
+                return
+            except OSError as error:
+                if delay == 0 or not (
+                    isinstance(error, PermissionError) or getattr(error, "winerror", None) in (5, 32)
+                ):
+                    raise
+                time.sleep(delay)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 def camera_snapshot_name(camera_name):
     safe_name = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(camera_name or '').strip())
@@ -131,6 +154,7 @@ def publicar_estado_anpr(camera_name, **fields):
     with status_lock:
         current = anpr_status.get(camera_name, {})
         current.update(fields)
+        current["last_error"] = current.get("processing_error") or current.get("capture_error") or ""
         current["camera"] = camera_name
         current["updated_at"] = utc_iso()
         if last_status_file_error:
@@ -570,13 +594,13 @@ def abrir_barreras(camera_name):
 
 def capturar_frames(rtsp_url, camera_name, stop_flag):
     print(f"[{camera_name}] Iniciando captura...")
-    publicar_estado_anpr(camera_name, capture_running=False, frame_count=0, last_error="")
+    publicar_estado_anpr(camera_name, capture_running=False, frame_count=0, capture_error="")
     os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|buffer_size;102400"
     cap = cv2.VideoCapture(rtsp_url)
 
     if not cap.isOpened():
         print(f"[{camera_name}] ERROR: No se pudo abrir el stream.")
-        publicar_estado_anpr(camera_name, capture_running=False, last_error="No se pudo abrir el stream RTSP.")
+        publicar_estado_anpr(camera_name, capture_running=False, capture_error="No se pudo abrir el stream RTSP.")
         return
 
     frame_count = 0
@@ -589,7 +613,7 @@ def capturar_frames(rtsp_url, camera_name, stop_flag):
 
             if not ret or frame is None:
                 print(f"[{camera_name}] ERROR en captura, reconectando...")
-                publicar_estado_anpr(camera_name, capture_running=False, last_error="Error de captura, reconectando.")
+                publicar_estado_anpr(camera_name, capture_running=False, capture_error="Error de captura, reconectando.")
                 time.sleep(2)
                 cap.release()
                 cap = cv2.VideoCapture(rtsp_url)
@@ -611,7 +635,7 @@ def capturar_frames(rtsp_url, camera_name, stop_flag):
                     frame_width=int(frame_w),
                     frame_height=int(frame_h),
                     last_frame_at=utc_iso(),
-                    last_error=""
+                    capture_error=""
                 )
                 last_status = now
     finally:
@@ -621,16 +645,33 @@ def capturar_frames(rtsp_url, camera_name, stop_flag):
 
 def procesar_frames(camera_name, stop_flag):
     print(f"[{camera_name}] Iniciando procesamiento...")
-    publicar_estado_anpr(camera_name, processing_running=False, models_loaded=False, last_error="")
+    model_stage = "placas"
+    publicar_estado_anpr(
+        camera_name, processing_running=False, models_loaded=False,
+        model_load_stage="placas", model_load_failed_at="", processing_error=""
+    )
 
     try:
         placa_model = YOLO(YOLO_MODEL_PATH)
+        model_stage = "vehiculos"
+        publicar_estado_anpr(camera_name, model_load_stage="vehiculos")
         vehiculo_model = YOLO(YOLO_MODEL_VEHICLE_PATH)
-        ocr_model = LicensePlateRecognizer('cct-s-v2-global-model')
-        publicar_estado_anpr(camera_name, processing_running=True, models_loaded=True, last_error="")
+        model_stage = "ocr"
+        publicar_estado_anpr(camera_name, model_load_stage="ocr")
+        ocr_model = LicensePlateRecognizer(
+            onnx_model_path=OCR_MODEL_PATH, plate_config_path=OCR_PLATE_CONFIG_PATH
+        )
+        publicar_estado_anpr(
+            camera_name, processing_running=True, models_loaded=True,
+            model_load_stage="listo", model_load_failed_at="", processing_error=""
+        )
     except Exception as e:
-        print(f"[{camera_name}] ERROR al cargar modelos: {e}")
-        publicar_estado_anpr(camera_name, processing_running=False, models_loaded=False, last_error=f"Error al cargar modelos: {e}")
+        print(f"[{camera_name}] ERROR al cargar modelos ({model_stage}): {e}")
+        publicar_estado_anpr(
+            camera_name, processing_running=False, models_loaded=False,
+            model_load_stage="fallo", model_load_failed_at=model_stage,
+            processing_error=f"Error al cargar modelos ({model_stage}): {e}"
+        )
         return
 
     cache = {}
@@ -776,7 +817,7 @@ def procesar_frames(camera_name, stop_flag):
                                         plate_candidate_count=plate_candidate_count,
                                         ocr_attempt_count=ocr_attempt_count,
                                         prediction_count=prediction_count,
-                                        last_error=""
+                                        processing_error=""
                                     )
 
                                     require_veh = config.get("require_vehicle_detection", False)
@@ -801,7 +842,7 @@ def procesar_frames(camera_name, stop_flag):
                                     ocr_attempt_count=ocr_attempt_count,
                                     plate_candidate_count=plate_candidate_count,
                                     prediction_count=prediction_count,
-                                    last_error=""
+                                    processing_error=""
                                 )
 
                 plate_candidate_count += frame_candidate_count
@@ -816,13 +857,13 @@ def procesar_frames(camera_name, stop_flag):
                         invalid_read_count=invalid_read_count,
                         last_prediction_at=utc_iso(),
                         last_frame_candidates=int(frame_candidate_count),
-                        last_error=""
+                        processing_error=""
                     )
                     last_status = ahora
 
             except Exception as e:
                 print(f"[{camera_name}] Error en predicción: {e}")
-                publicar_estado_anpr(camera_name, last_error=f"Error en predicción: {e}")
+                publicar_estado_anpr(camera_name, processing_error=f"Error en predicción: {e}")
 
             if ahora - last_cleanup > 10:
                 limpiar_cache(cache)

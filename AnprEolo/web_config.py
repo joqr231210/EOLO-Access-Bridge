@@ -621,6 +621,12 @@ def check_anpr_watchdog():
         if not isinstance(status, dict):
             restart_anpr_from_watchdog("No hay estado para la camara configurada", camera_name)
             return
+        if status.get("model_load_stage") == "fallo":
+            anpr_watchdog_state["lastReason"] = (
+                f"Error al cargar modelos ANPR en {camera_name}; requiere revision."
+            )
+            anpr_watchdog_state["lastCamera"] = camera_name
+            return
         if status.get("capture_running") is False or status.get("processing_running") is False:
             restart_anpr_from_watchdog("La captura o el procesamiento ANPR se detuvo", camera_name)
             return

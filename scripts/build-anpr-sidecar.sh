@@ -20,6 +20,7 @@ fi
 
 "${VENV_DIR}/bin/python" -m pip install --upgrade pip setuptools wheel
 "${VENV_DIR}/bin/python" -m pip install -r "${ANPR_DIR}/requirements.txt" pyinstaller
+"${VENV_DIR}/bin/python" "${ROOT_DIR}/scripts/verify-anpr-assets.py"
 
 cd "${ANPR_DIR}"
 "${VENV_DIR}/bin/pyinstaller" --clean --noconfirm anpr-sidecar.spec

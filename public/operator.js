@@ -1764,7 +1764,6 @@ function bindKeyboardShortcuts() {
 
 function anprStatusText(status) {
   if (!status) return 'ANPR esperando estado del motor';
-  if (status.last_error) return `ANPR: ${status.last_error}`;
   const flags = [];
   flags.push(status.capture_running ? 'capturando' : 'sin captura');
   flags.push(status.processing_running ? 'procesando' : 'sin proceso');
@@ -1775,7 +1774,8 @@ function anprStatusText(status) {
   const reads = Number(status.valid_read_count || 0);
   const rejected = Number(status.invalid_read_count || 0);
   const lastRejected = status.last_ocr_text ? ` · ultimo OCR rechazado: ${status.last_ocr_text}` : '';
-  return `ANPR ${flags.join(' · ')} · ${frames} frames · ${predictions} pred. · ${candidates} cand. · ${ocr} OCR · ${reads} lect. · ${rejected} rech.${lastRejected}`;
+  const error = status.last_error ? ` · Error: ${status.last_error}` : '';
+  return `ANPR ${flags.join(' · ')} · ${frames} frames · ${predictions} pred. · ${candidates} cand. · ${ocr} OCR · ${reads} lect. · ${rejected} rech.${lastRejected}${error}`;
 }
 
 function startAnprDetectionTimer() {
