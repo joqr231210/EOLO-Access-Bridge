@@ -20,7 +20,12 @@ ASSETS = {
 def main():
     for filename, expected_sha256 in ASSETS.items():
         file_path = ANPR_DIR / filename
-        actual_sha256 = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        asset_bytes = file_path.read_bytes()
+        # Git may check text YAML files out with CRLF on Windows while the
+        # expected digest is recorded from the LF source artifact.
+        if file_path.suffix.lower() in {".yaml", ".yml"}:
+            asset_bytes = asset_bytes.replace(b"\r\n", b"\n")
+        actual_sha256 = hashlib.sha256(asset_bytes).hexdigest()
         if actual_sha256 != expected_sha256:
             raise ValueError(f"El modelo ANPR {filename} no coincide con el SHA-256 esperado")
 
