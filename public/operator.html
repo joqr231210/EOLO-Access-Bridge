@@ -238,6 +238,10 @@
             <span class="nav-row-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-route"></use></svg></span>
             <strong>Movimientos</strong>
           </button>
+          <button class="nav-row" type="button" data-view="permissions" title="Permisos" aria-label="Permisos">
+            <span class="nav-row-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-user-plus"></use></svg></span>
+            <strong>Permisos</strong>
+          </button>
           <button class="nav-row" type="button" data-view="events" title="Eventos" aria-label="Eventos">
             <span class="nav-row-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-shield"></use></svg></span>
             <strong>Eventos</strong>
@@ -473,6 +477,55 @@
             <button class="ghost" type="button" id="nextMovementsPageBtn">Siguiente</button>
           </div>
         </nav>
+        </section>
+
+        <section class="permissions-view hidden" id="permissionsView">
+          <header class="operator-topbar">
+            <div><h2>Acceso seleccionado</h2><h1>Permisos</h1></div>
+            <div class="operator-actions">
+              <span class="sync-state" id="permissionSourceState">Sin consultar</span>
+              <button class="ghost" type="button" id="refreshPermissionsBtn">Actualizar</button>
+              <div class="profile-menu" data-profile-menu>
+                <button class="avatar profile-trigger" type="button" aria-label="Perfil de usuario" data-profile-trigger>
+                  <img class="user-avatar-img hidden" alt="" />
+                </button>
+                <div class="profile-dropdown">
+                  <strong class="profile-name">Operador EOLO</strong>
+                  <span class="profile-phone"></span>
+                  <button class="ghost" type="button" data-menu-settings>Ajustes</button>
+                  <button class="ghost" type="button" data-logout>Cerrar sesión</button>
+                </div>
+              </div>
+            </div>
+          </header>
+          <p class="permission-view-intro">Permisos del acceso activo. Selecciona un permiso vigente para preparar un nuevo ingreso.</p>
+          <section class="permission-summary-grid" aria-label="Totales de permisos">
+            <article class="inventory-card"><div><span>Permisos descargados</span><strong id="permissionTotal">0</strong></div></article>
+            <article class="inventory-card"><div><span>Vigentes</span><strong id="permissionActiveTotal">0</strong></div></article>
+            <article class="inventory-card"><div><span>Vehículos</span><strong id="permissionVehicleTotal">0</strong></div></article>
+            <article class="inventory-card"><div><span>Peatones</span><strong id="permissionPedestrianTotal">0</strong></div></article>
+          </section>
+          <section class="permission-filters" aria-label="Filtros de permisos">
+            <label class="search-box"><svg class="ui-icon" aria-hidden="true"><use href="#icon-search"></use></svg><input id="permissionSearch" type="search" placeholder="Buscar nombre, folio, placa o QR" aria-label="Buscar permisos" /></label>
+            <label>Entidad<select id="permissionEntityFilter"><option value="">Todas</option><option value="vehicle">Vehículos</option><option value="pedestrian">Peatones</option></select></label>
+            <label>Tipo<select id="permissionTypeFilter"><option value="">Todos</option><option value="visitante">Visitante</option><option value="residente">Residente</option><option value="otro">Otro</option></select></label>
+            <label>Estado<select id="permissionStatusFilter"><option value="">Todos</option><option value="valid">Vigentes</option><option value="upcoming">Próximos</option><option value="inactive">Inactivos</option></select></label>
+            <label>Vigencia desde<input id="permissionDateFrom" type="date" /></label>
+            <label>Vigencia hasta<input id="permissionDateTo" type="date" /></label>
+            <button class="ghost" type="button" id="clearPermissionFiltersBtn">Limpiar filtros</button>
+          </section>
+          <p class="permission-list-caption" id="permissionListCaption">Selecciona Actualizar para descargar permisos.</p>
+          <section class="table-card permission-table-card">
+            <table>
+              <thead><tr><th>Persona y folio</th><th>Tipo</th><th>Entidad</th><th>Placa / QR</th><th>Inicio</th><th>Fin</th><th>Estado</th><th>Acción</th></tr></thead>
+              <tbody id="permissionRows"></tbody>
+            </table>
+            <div class="empty-state" id="permissionEmptyState" hidden>Sin permisos para mostrar.</div>
+          </section>
+          <nav class="movement-pagination" aria-label="Paginación de permisos">
+            <span><b id="permissionPaginationInfo">Mostrando 0 de 0</b><small id="permissionDownloadInfo">Sin descargar</small></span>
+            <div><button class="ghost" type="button" id="prevPermissionsPageBtn">Anterior</button><button class="ghost" type="button" id="nextPermissionsPageBtn">Siguiente</button></div>
+          </nav>
         </section>
 
         <section class="events-view hidden" id="eventsView">
@@ -776,6 +829,14 @@
               </article>
             </div>
 
+            <div class="movement-permission-context hidden" id="movementPermissionContext"></div>
+            <input name="permiso_acceso_id" type="hidden" />
+            <input name="permiso_acceso_id2" type="hidden" />
+            <input name="permission_user_id" type="hidden" />
+            <input name="face_image_url" type="hidden" />
+            <input name="qr_code" type="hidden" />
+            <input name="card_number" type="hidden" />
+
             <div class="form-grid two primary-fields" id="vehiclePrimaryFields">
               <label>
                 <span class="field-label">Placas<span>*</span></span>
@@ -837,6 +898,7 @@
               <div class="segmented">
                 <button class="segment active" type="button" data-movement-type="Visita">Visita</button>
                 <button class="segment" type="button" data-movement-type="Servicio">Servicio</button>
+                <button class="segment" type="button" data-movement-type="Residente">Residente</button>
               </div>
             </div>
 

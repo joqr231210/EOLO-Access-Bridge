@@ -1,3 +1,10 @@
+import {
+  filteredPermissions,
+  permissionMovementPrefill,
+  permissionRegistrationIssue,
+  permissionStatus
+} from './operatorPermissions.js';
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -23,6 +30,13 @@ const state = {
   eventDateEnd: '',
   eventSearchTimer: null,
   movements: [],
+  permissions: [],
+  permissionSource: '',
+  permissionDownloadedAt: '',
+  permissionPage: 1,
+  permissionPageSize: 10,
+  permissionLoading: false,
+  selectedPermission: null,
   movementPage: 1,
   movementPageSize: 10,
   movementTotal: 0,
@@ -703,6 +717,11 @@ async function loadAccesses({ restoreSessionSelection = false } = {}) {
   state.events = [];
   state.eventSummary = { total: 0, identified: 0, vehicleIdentified: 0, personIdentified: 0 };
   state.pendingMovements = [];
+  state.permissions = [];
+  state.permissionSource = '';
+  state.permissionDownloadedAt = '';
+  state.permissionPage = 1;
+  renderPermissions();
   renderAccesses();
   renderPendingMovements();
   if (!restoreSessionSelection || !state.activeAccess) {
@@ -884,6 +903,11 @@ async function selectAccess(index) {
   state.residentSource = '';
   state.selectedResident = null;
   state.pendingMovements = [];
+  state.permissions = [];
+  state.permissionSource = '';
+  state.permissionDownloadedAt = '';
+  state.permissionPage = 1;
+  renderPermissions();
   state.inventorySummary = { vehicles: 0, pedestrians: 0 };
   applyInventorySummary(state.inventorySummary);
   renderPendingMovements();
@@ -904,6 +928,7 @@ function showAccessPicker() {
   $('#accessPickerView').classList.remove('hidden');
   $('#controlPointPickerView').classList.add('hidden');
   $('#movementsView').classList.add('hidden');
+  $('#permissionsView').classList.add('hidden');
   $('#eventsView').classList.add('hidden');
   $('#settingsView').classList.add('hidden');
   renderActiveAccessSidebar();
@@ -919,6 +944,7 @@ function showControlPointPicker() {
   $('#accessPickerView').classList.add('hidden');
   $('#controlPointPickerView').classList.remove('hidden');
   $('#movementsView').classList.add('hidden');
+  $('#permissionsView').classList.add('hidden');
   $('#eventsView').classList.add('hidden');
   $('#settingsView').classList.add('hidden');
   $('#controlPointAccessName').textContent = state.activeAccess?.name || 'Selecciona acceso';
@@ -931,6 +957,7 @@ function showMovementsShell() {
   $('#accessPickerView').classList.add('hidden');
   $('#controlPointPickerView').classList.add('hidden');
   $('#movementsView').classList.remove('hidden');
+  $('#permissionsView').classList.add('hidden');
   $('#eventsView').classList.add('hidden');
   $('#settingsView').classList.add('hidden');
   setActiveNav('movements');
@@ -943,6 +970,22 @@ function showMovements() {
   startAnprDetectionTimer();
 }
 
+async function showPermissions() {
+  stopSettingsCamera();
+  stopIdCamera();
+  stopAnprDetectionTimer();
+  closeEventDateOverlay();
+  $('#accessPickerView').classList.add('hidden');
+  $('#controlPointPickerView').classList.add('hidden');
+  $('#movementsView').classList.add('hidden');
+  $('#permissionsView').classList.remove('hidden');
+  $('#eventsView').classList.add('hidden');
+  $('#settingsView').classList.add('hidden');
+  setActiveNav('permissions');
+  renderActiveAccessSidebar();
+  await loadPermissions();
+}
+
 async function showEvents() {
   stopSettingsCamera();
   stopIdCamera();
@@ -950,6 +993,7 @@ async function showEvents() {
   $('#accessPickerView').classList.add('hidden');
   $('#controlPointPickerView').classList.add('hidden');
   $('#movementsView').classList.add('hidden');
+  $('#permissionsView').classList.add('hidden');
   $('#eventsView').classList.remove('hidden');
   $('#settingsView').classList.add('hidden');
   setActiveNav('events');
@@ -964,6 +1008,7 @@ function showSettings() {
   $('#accessPickerView').classList.add('hidden');
   $('#controlPointPickerView').classList.add('hidden');
   $('#movementsView').classList.add('hidden');
+  $('#permissionsView').classList.add('hidden');
   $('#eventsView').classList.add('hidden');
   $('#settingsView').classList.remove('hidden');
   setActiveNav('settings');
@@ -1116,6 +1161,102 @@ async function loadMovements() {
   renderMovements(result.summary || {});
   renderMovementPagination();
   $('#syncState').textContent = `Ult. Sinc. ${formatSyncDateTime(new Date().toISOString())}`;
+}
+
+async function loadPermissions() {
+  const accessId = state.activeAccess?.id;
+  if (!accessId || state.permissionLoading) return;
+  state.permissionLoading = true;
+  $('#refreshPermissionsBtn').disabled = true;
+  $('#permissionSourceState').textContent = 'Consultando permisos...';
+  try {
+    const query = new URLSearchParams({ access: accessId, allow_demo: '0' });
+    const result = await api(`/api/operator/access-permissions?${query}`);
+    if (state.activeAccess?.id !== accessId) return;
+    state.permissions = (result.permissions || []).filter((permission) => permission.access_id === accessId);
+    state.permissionSource = result.source || '';
+    state.permissionDownloadedAt = result.downloadedAt || '';
+    state.permissionPage = 1;
+    $('#permissionSourceState').textContent = result.source === 'cloud'
+      ? 'EOLO Cloud'
+      : result.source === 'local-snapshot' ? 'Copia local' : 'Sin copia local';
+    renderPermissions();
+  } catch (error) {
+    if (state.activeAccess?.id === accessId) {
+      $('#permissionSourceState').textContent = 'Error al consultar';
+      $('#permissionListCaption').textContent = error.message;
+      showToast({ type: 'error', title: 'No se pudieron consultar permisos', message: error.message });
+    }
+  } finally {
+    state.permissionLoading = false;
+    $('#refreshPermissionsBtn').disabled = false;
+  }
+}
+
+function permissionFilters() {
+  return {
+    search: $('#permissionSearch').value.trim(),
+    entity: $('#permissionEntityFilter').value,
+    type: $('#permissionTypeFilter').value,
+    status: $('#permissionStatusFilter').value,
+    from: $('#permissionDateFrom').value,
+    to: $('#permissionDateTo').value
+  };
+}
+
+function permissionStatusText(status) {
+  return status === 'valid' ? 'Vigente' : status === 'upcoming' ? 'Próximo' : 'Inactivo';
+}
+
+function formatPermissionDate(value) {
+  const date = parseLocalDate(value);
+  return date ? new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }).format(date) : '—';
+}
+
+function renderPermissions() {
+  const accessId = state.activeAccess?.id || '';
+  const pointId = state.activeControlPoint?.id || '';
+  const all = state.permissions || [];
+  const filtered = filteredPermissions(all, permissionFilters());
+  const totalPages = Math.max(1, Math.ceil(filtered.length / state.permissionPageSize));
+  state.permissionPage = Math.min(state.permissionPage, totalPages);
+  const start = (state.permissionPage - 1) * state.permissionPageSize;
+  const page = filtered.slice(start, start + state.permissionPageSize);
+  $('#permissionTotal').textContent = all.length;
+  $('#permissionActiveTotal').textContent = all.filter((item) => permissionStatus(item) === 'valid').length;
+  $('#permissionVehicleTotal').textContent = all.filter((item) => item.is_vehicle).length;
+  $('#permissionPedestrianTotal').textContent = all.filter((item) => !item.is_vehicle).length;
+  $('#permissionListCaption').textContent = all.length
+    ? `${filtered.length} de ${all.length} permisos · Las fechas muestran permisos cuya vigencia coincide con el rango.`
+    : state.permissionSource === 'local-fallback'
+      ? 'No hay permisos descargados para este acceso. Revisa la conexión a EOLO Cloud.'
+      : 'No hay permisos para este acceso.';
+  $('#permissionDownloadInfo').textContent = state.permissionDownloadedAt
+    ? `Descargado ${formatSyncDateTime(state.permissionDownloadedAt)}` : 'Sin descarga reciente';
+  $('#permissionPaginationInfo').textContent = filtered.length
+    ? `Mostrando ${start + 1}-${start + page.length} de ${filtered.length}` : 'Mostrando 0 de 0';
+  $('#prevPermissionsPageBtn').disabled = state.permissionPage <= 1;
+  $('#nextPermissionsPageBtn').disabled = state.permissionPage >= totalPages;
+  $('#permissionRows').innerHTML = page.map((permission) => {
+    const status = permissionStatus(permission);
+    const issue = permissionRegistrationIssue(permission, accessId, pointId);
+    const face = mediaUrl(permission.face_image);
+    return `<tr>
+      <td><div class="permission-user-cell">${face
+        ? `<img src="${escapeHtml(face)}" alt="" loading="lazy" />`
+        : '<span class="permission-face-placeholder"><svg class="ui-icon" aria-hidden="true"><use href="#icon-person"></use></svg></span>'}
+        <span><strong>${escapeHtml(permission.principal_name || permission.user_name || 'Sin nombre')}</strong><small>${escapeHtml(permission.id2 || permission.local_id || permission.id || 'Sin folio')}</small></span>
+      </div></td>
+      <td>${escapeHtml(permission.permission_type || 'Otro')}</td>
+      <td>${permission.is_vehicle ? 'Vehículo' : 'Peatón'}</td>
+      <td>${escapeHtml(permission.plate || permission.qr_code || '—')}${permission.plate && permission.qr_code ? `<span class="subtle">QR ${escapeHtml(permission.qr_code)}</span>` : ''}</td>
+      <td>${escapeHtml(formatPermissionDate(permission.valid_from))}</td>
+      <td>${escapeHtml(formatPermissionDate(permission.valid_until))}</td>
+      <td><span class="permission-status-pill ${status}">${permissionStatusText(status)}</span></td>
+      <td><button class="ghost permission-register-button" type="button" data-register-permission="${escapeHtml(permission.id)}" ${issue ? `disabled title="${escapeHtml(issue)}"` : ''}>+ Registrar</button>${issue ? `<span class="subtle">${escapeHtml(issue)}</span>` : ''}</td>
+    </tr>`;
+  }).join('');
+  $('#permissionEmptyState').hidden = page.length > 0;
 }
 
 async function loadInventorySummary() {
@@ -2699,10 +2840,12 @@ function focusMovementActionButton() {
   }, 80);
 }
 
-function openMovementDialog(movement = null, { focusPlate = false, focusAction = false } = {}) {
+function openMovementDialog(movement = null, { focusPlate = false, focusAction = false, loadResidentList = true } = {}) {
   state.selectedMovement = movement;
+  state.selectedPermission = null;
   state.selectedResident = null;
   state.vehicleProfile = null;
+  state.residentVehicleProfile = null;
   state.vehicleDrivers = [];
   state.companions = [];
   resetPlateLookupState();
@@ -2710,6 +2853,8 @@ function openMovementDialog(movement = null, { focusPlate = false, focusAction =
   state.movementType = movement?.movement_type || 'Visita';
   const form = $('#movementForm');
   form.reset();
+  $('#movementPermissionContext').classList.add('hidden');
+  $('#movementPermissionContext').innerHTML = '';
   setMessage($('#movementMessage'), '');
 
   $('#movementModalTitle').textContent = movement ? 'Información de Movimiento' : 'Solicitud de Acceso';
@@ -2761,7 +2906,7 @@ function openMovementDialog(movement = null, { focusPlate = false, focusAction =
     vehicleDetails.hidden = state.movementKind !== 'Vehiculo';
     setVehicleDetailsCollapsed(true);
   }
-  if (!movement) {
+  if (!movement && loadResidentList) {
     loadResidents().catch((error) => setMessage($('#movementMessage'), error.message));
   } else {
     renderResidentList(values.resident_search);
@@ -2790,6 +2935,53 @@ function openMovementDialog(movement = null, { focusPlate = false, focusAction =
   if (!movement && focusPlate) focusMovementPlateInput();
 }
 
+async function openPermissionMovementDialog(permission) {
+  const accessId = state.activeAccess?.id || '';
+  const pointId = state.activeControlPoint?.id || '';
+  const issue = permissionRegistrationIssue(permission, accessId, pointId);
+  if (issue) throw new Error(issue);
+  const query = new URLSearchParams({ access: accessId, control_point: pointId });
+  const result = await api(`/api/operator/access-permissions/${encodeURIComponent(permission.id)}/register-context?${query}`);
+  if (state.activeAccess?.id !== accessId || state.activeControlPoint?.id !== pointId) return;
+  const current = result.permission || permission;
+  const prefill = permissionMovementPrefill(current);
+  openMovementDialog(null, { loadResidentList: false });
+  state.selectedPermission = current;
+  state.movementKind = prefill.kind;
+  state.movementType = prefill.movementType;
+  setKindButtons();
+  setMovementTypeButtons();
+  $('#movementKindSummary').textContent = prefill.kind;
+  const form = $('#movementForm');
+  Object.entries(prefill).forEach(([name, value]) => {
+    if (form.elements[name]) form.elements[name].value = value;
+  });
+  $('#movementModalMeta').textContent = `Permiso ${current.id2 || current.local_id || current.id}`;
+  const face = mediaUrl(current.face_image);
+  const context = $('#movementPermissionContext');
+  context.innerHTML = `${face ? `<img src="${escapeHtml(face)}" alt="Rostro del permiso" />` : ''}
+    <div><strong>Permiso ${escapeHtml(current.permission_type || 'de acceso')} · ${escapeHtml(current.id2 || current.id)}</strong>
+    <span>${escapeHtml(current.principal_name || '')}${current.qr_code ? ` · QR ${escapeHtml(current.qr_code)}` : ''} · Vigente hasta ${escapeHtml(formatPermissionDate(current.valid_until))}</span></div>`;
+  context.classList.remove('hidden');
+  let residents = [];
+  try {
+    residents = await loadResidents();
+  } catch (error) {
+    setMessage($('#movementMessage'), `No se pudo consultar residentes: ${error.message}`);
+  }
+  if (!$('#movementDialog').open || state.selectedPermission?.id !== current.id) return;
+  const residentId = result.residentId || prefill.resident_id;
+  if (residentId) {
+    const resident = residents.find((item) => String(item.id) === String(residentId)) || {
+      id: residentId,
+      name: 'Residente asociado al permiso'
+    };
+    selectResident(resident);
+  } else {
+    setMessage($('#movementMessage'), 'Selecciona a quién visita antes de registrar este permiso.');
+  }
+}
+
 function setMovementFieldsReadOnly(isReadOnly) {
   const form = $('#movementForm');
   $$('input, select, textarea', form).forEach((input) => {
@@ -2809,6 +3001,7 @@ function closeMovementDialog() {
   stopIdCamera();
   closeIdCameraDialog();
   $('#movementDialog').close();
+  state.selectedPermission = null;
 }
 
 function movementCanExit(movement = state.selectedMovement) {
@@ -3824,6 +4017,11 @@ function bindEvents() {
       if (!state.activeControlPoint) return;
       if (button.dataset.view === 'settings') showSettings();
       if (button.dataset.view === 'movements') showMovements();
+      if (button.dataset.view === 'permissions') {
+        showPermissions().catch((error) => {
+          $('#permissionSourceState').textContent = error.message;
+        });
+      }
       if (button.dataset.view === 'events') {
         showEvents().catch((error) => {
           $('#eventSyncState').textContent = error.message;
@@ -3834,6 +4032,37 @@ function bindEvents() {
   $('#refreshEventsBtn')?.addEventListener('click', () => loadEvents().catch((error) => {
     $('#eventSyncState').textContent = error.message;
   }));
+  $('#refreshPermissionsBtn').addEventListener('click', () => loadPermissions());
+  ['#permissionSearch', '#permissionEntityFilter', '#permissionTypeFilter', '#permissionStatusFilter', '#permissionDateFrom', '#permissionDateTo']
+    .forEach((selector) => {
+      $(selector).addEventListener(selector === '#permissionSearch' ? 'input' : 'change', () => {
+        state.permissionPage = 1;
+        renderPermissions();
+      });
+    });
+  $('#clearPermissionFiltersBtn').addEventListener('click', () => {
+    ['#permissionSearch', '#permissionEntityFilter', '#permissionTypeFilter', '#permissionStatusFilter', '#permissionDateFrom', '#permissionDateTo']
+      .forEach((selector) => { $(selector).value = ''; });
+    state.permissionPage = 1;
+    renderPermissions();
+  });
+  $('#prevPermissionsPageBtn').addEventListener('click', () => {
+    if (state.permissionPage > 1) state.permissionPage -= 1;
+    renderPermissions();
+  });
+  $('#nextPermissionsPageBtn').addEventListener('click', () => {
+    state.permissionPage += 1;
+    renderPermissions();
+  });
+  $('#permissionRows').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-register-permission]');
+    if (!button || button.disabled) return;
+    const permission = state.permissions.find((item) => item.id === button.dataset.registerPermission);
+    if (!permission) return;
+    openPermissionMovementDialog(permission).catch((error) => {
+      showToast({ type: 'error', title: 'No se pudo preparar el permiso', message: error.message });
+    });
+  });
   $('#eventSearch')?.addEventListener('input', () => {
     $('#clearEventSearchBtn')?.classList.toggle('hidden', !$('#eventSearch').value.trim());
     if ($('#eventSearch').value.trim()) clearEventDateRange();

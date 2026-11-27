@@ -1868,7 +1868,7 @@ app.get(
 
     const fallbackSnapshot = readOperatorAccessPermissionsSnapshot(accessId, search);
     const fallback = fallbackSnapshot?.permissions ||
-      localFallbackAccessPermissions(accessId, search);
+      (req.query.allow_demo === '0' ? [] : localFallbackAccessPermissions(accessId, search));
     const summary = summarizeOperatorAccessPermissions(fallback);
     res.set('Cache-Control', 'no-store');
     res.json({
@@ -1880,6 +1880,38 @@ app.get(
       summary,
       schema: operatorAccessPermissionSchema()
     });
+  })
+);
+
+app.get(
+  '/api/operator/access-permissions/:id/register-context',
+  requireOperatorSession,
+  asyncRoute(async (req, res) => {
+    const accessId = String(req.query.access || '').trim();
+    const controlPointId = String(req.query.control_point || '').trim();
+    const permission = readOperatorAccessPermissionsSnapshot(accessId)?.permissions
+      ?.find((item) => item.id === req.params.id);
+    if (!permission) {
+      const error = new Error('El permiso no esta disponible para este acceso. Actualiza la lista.');
+      error.status = 404;
+      throw error;
+    }
+    const issue = operatorPermissionRegistrationIssue(permission, accessId, controlPointId);
+    if (issue) {
+      const error = new Error(issue);
+      error.status = 409;
+      throw error;
+    }
+    let residentId = permission.resident_id;
+    if (!residentId && config.operator.authMode === 'cloud') {
+      const userId = permission.user_id || permission.associated_user_id;
+      if (userId) {
+        residentId = await findOperatorAccessResidentIdByUser(req.operatorSession, accessId, userId)
+          .catch(() => '');
+      }
+    }
+    res.set('Cache-Control', 'no-store');
+    res.json({ ok: true, permission, residentId: residentId || '' });
   })
 );
 
@@ -1992,6 +2024,22 @@ app.post(
     const controlPointId = String(
       req.body.control_point_id || req.body.control_point || req.body.id_punto_control || ''
     ).trim();
+    const permissionId = firstText(req.body.permiso_acceso_id, req.body.permisoacceso_id, req.body.source_permission_id);
+    if (permissionId) {
+      const permission = readOperatorAccessPermissionsSnapshot(accessId)?.permissions
+        ?.find((item) => item.id === permissionId);
+      if (!permission) {
+        const error = new Error('El permiso ya no esta disponible. Actualiza la lista antes de registrar.');
+        error.status = 409;
+        throw error;
+      }
+      const issue = operatorPermissionRegistrationIssue(permission, accessId, controlPointId);
+      if (issue) {
+        const error = new Error(issue);
+        error.status = 409;
+        throw error;
+      }
+    }
     if (config.operator.authMode === 'cloud') {
       if (!accessId || !controlPointId) {
         const error = new Error('El acceso y punto de control son obligatorios para crear movimientos.');
@@ -4626,7 +4674,7 @@ function normalizeOperatorAccessPermission(item = {}, fallbackAccessId = '') {
     )
   ));
   const qrCode = firstText(
-    getField(source, 'codigoqr_text', 'codigo_qr_text', 'CodigoQR', 'Codigo QR', 'codigoqr', 'qr_text')
+    getField(source, 'idlocal_text', 'codigoqr_text', 'codigo_qr_text', 'CodigoQR', 'Codigo QR', 'codigoqr', 'qr_text')
   );
   const cardNumber = firstText(
     getField(source, 'numerotarjeta_text', 'numero_tarjeta_text', 'NumeroTarjeta', 'Numero Tarjeta', 'tarjeta_text')
@@ -4671,6 +4719,7 @@ function normalizeOperatorAccessPermission(item = {}, fallbackAccessId = '') {
       source,
       'aperturaautomatica_boolean',
       'apertura_automatica_boolean',
+      'automatico_boolean',
       'AperturaAutomatica',
       'Apertura Automatica',
       'aperturaautomatica'
@@ -4701,6 +4750,13 @@ function normalizeOperatorAccessPermission(item = {}, fallbackAccessId = '') {
     prefix: permissionId2,
     resident_id: residentId,
     user_id: firstThingId(getField(source, 'usuario_user', 'Usuario', 'user')),
+    associated_user_id: firstThingId(getField(source, 'creadorpermiso_user', 'UsuarioAsociado')),
+    authorized_control_point_ids: normalizeThingIdList(getField(
+      source,
+      'puntoscontrolautorizados_list_custom_accesoconfiguracion',
+      'PuntosControlAutorizados'
+    )),
+    vehicle_id: firstThingId(getField(source, 'vehiculo_custom_vehicle', 'Vehiculo')),
     valid_from: validFrom,
     valid_until: validUntil,
     validity_active: currentlyValid,
@@ -4721,6 +4777,22 @@ function normalizeOperatorAccessPermission(item = {}, fallbackAccessId = '') {
     modified_at: bubbleDateToIso(getField(item, 'Modified Date')),
     raw: item
   };
+}
+
+function operatorPermissionRegistrationIssue(permission = {}, accessId = '', controlPointId = '') {
+  if (!accessId || permission.access_id !== accessId) return 'El permiso pertenece a otro acceso.';
+  if (!controlPointId) return 'Selecciona un punto de control para registrar este permiso.';
+  if (!permission.active) return 'El permiso esta inactivo o vencido.';
+  const now = Date.now();
+  const startsAt = parseOperatorDateValue(permission.valid_from)?.getTime();
+  const endsAt = parseOperatorDateValue(permission.valid_until)?.getTime();
+  if (startsAt && startsAt > now) return 'La vigencia del permiso aun no inicia.';
+  if (!endsAt || endsAt <= now) return 'La vigencia del permiso termino.';
+  const authorized = permission.authorized_control_point_ids || [];
+  if (authorized.length && !authorized.includes(controlPointId)) {
+    return 'El permiso no autoriza este punto de control.';
+  }
+  return '';
 }
 
 function operatorAccessPermissionSource(item = {}) {
