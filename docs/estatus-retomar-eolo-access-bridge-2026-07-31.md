@@ -2343,3 +2343,11 @@ Validacion local en Mac: pruebas Python de estado y watchdog, `npm test`, verifi
 ### Version visible en el login
 
 Se eliminaron los textos de version fijos del HTML y JavaScript del operador. El servidor lee la version de `package.json` al iniciar, la coloca en el HTML de `/` y la devuelve en `bridge.version` de `GET /api/operator/login-status`. El navegador conserva la etiqueta de rama cloud y refresca la version al consultar el estado; el script del operador incluye la version en su URL para evitar usar una copia anterior tras actualizar. La respuesta HTML se entrega sin cache. Para el siguiente corte, incrementar la version del paquete una sola vez; no editar el login manualmente.
+
+## Actualizacion 2026-11-27 - Identificador editable del Bridge (v0.2.17)
+
+- En `/settings > Ajustes Bridge` el identificador local ahora es editable. La vista previa calcula los dos caracteres alfanumericos de los folios con la misma funcion SHA-256 que se usa al crear un movimiento; no modifica la configuracion hasta pulsar Guardar.
+- El servidor valida el identificador, lo persiste en `data/device-config.json` y lo vuelve a cargar tras reiniciar. El codigo nuevo se usa solo para folios nuevos; la cola pendiente y sus folios no se reescriben.
+- El operador debe comprobar que el codigo no lo use otro Bridge del mismo acceso. Un identificador distinto puede producir el mismo codigo de dos caracteres, por lo que la vista previa no asegura unicidad en Cloud.
+- Version fuente para el siguiente instalador Windows: `0.2.17`. En Windows: `git pull --ff-only origin main`, `npm ci`, `npm test`, `npm run desktop:win:full`. El `.exe` se generara en `release\EOLO Access Bridge Setup 0.2.17.exe`. El manifiesto de actualizacion sigue en `0.2.10` hasta disponer del instalador publicado y su SHA-256 real.
+- Se incorporo el ajuste remoto de verificacion de hash YAML del modelo ANPR para Windows (`65d5e52`) antes de este corte. Validacion en Mac: `npm test` (7/7), sintaxis JavaScript, version coincidente entre `package.json` y `package-lock.json`, y `git diff --check`. La vista local ya mostro la previsualizacion correcta para un identificador conocido (`72`) y la configuracion persistio tras recarga; el instalador nativo aun debe compilarse y probarse en Windows.

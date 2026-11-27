@@ -19,6 +19,7 @@ import { DeviceEventStream } from './eventStream.js';
 import { TaskRunner } from './taskRunner.js';
 import { addEvent, bus, ensureDataDirs, getEvents, getLogs, getStoredLogs, log } from './logger.js';
 import { loadRuntimeConfig, publicRuntimeConfig, saveRuntimeConfig } from './runtimeConfig.js';
+import { operatorId2DeviceCode } from './operatorId2.js';
 import { ServiceManager, remoteAnprService } from './serviceManager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -2290,14 +2291,27 @@ app.get(
   })
 );
 
+app.post(
+  '/api/operator/bridge-settings/device-code-preview',
+  requireOperatorSession,
+  asyncRoute(async (req, res) => {
+    const deviceId = validatedBridgeDeviceId(req.body?.deviceId);
+    res.json({ ok: true, deviceId, deviceCode: operatorId2DeviceCode(deviceId) });
+  })
+);
+
 app.put(
   '/api/operator/bridge-settings',
   requireOperatorSession,
   asyncRoute(async (req, res) => {
     const body = req.body || {};
+    const deviceId = Object.hasOwn(body, 'deviceId')
+      ? validatedBridgeDeviceId(body.deviceId)
+      : undefined;
     const saved = await saveRuntimeConfig({
       operator: {
-        serialNumber: firstText(body.serialNumber, body.sn)
+        serialNumber: firstText(body.serialNumber, body.sn),
+        ...(deviceId !== undefined ? { deviceId } : {})
       }
     });
     let deviceHeartbeat = null;
@@ -3788,6 +3802,7 @@ async function publicOperatorCloudConfig() {
     deviceDataType: config.operator.deviceDataType,
     deviceId: config.operator.deviceId,
     effectiveDeviceId,
+    deviceCode: operatorId2DeviceCode(effectiveDeviceId),
     serialNumber: operatorBridgeSerial(),
     branchLabel:
       config.operator.appVersion === 'live'
@@ -7983,17 +7998,21 @@ function fallbackOperatorId2Prefix(accessId = '') {
   return `AC${hash.slice(0, 2)}`;
 }
 
-function operatorId2DeviceCode(deviceId = '') {
-  const hash = crypto.createHash('sha256').update(firstText(deviceId, os.hostname(), 'bridge')).digest();
-  const value = hash.readUInt16BE(0) % 1296;
-  return value.toString(36).toUpperCase().padStart(2, '0');
-}
-
 function normalizeBridgeDeviceId(value) {
   return String(value || '')
     .trim()
     .replace(/[^A-Za-z0-9._:-]/g, '-')
     .slice(0, 120);
+}
+
+function validatedBridgeDeviceId(value) {
+  const deviceId = String(value ?? '').trim();
+  if (!deviceId || deviceId.length > 120 || !/^[A-Za-z0-9._:-]+$/.test(deviceId)) {
+    const error = new Error('El identificador debe tener de 1 a 120 caracteres: letras, numeros, punto, guion, guion bajo o dos puntos.');
+    error.status = 400;
+    throw error;
+  }
+  return deviceId;
 }
 
 function operatorBridgeSerial() {

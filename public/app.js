@@ -3191,7 +3191,7 @@ function renderBridgeSettingsServiceView() {
       <div class="service-section-heading compact">
         <div>
           <h4>Identidad del Bridge</h4>
-          <p>El identificador es unico para este Bridge local y no se edita desde la interfaz.</p>
+          <p>Define el identificador de esta instalacion. El codigo de dos caracteres se usa al crear nuevos folios locales.</p>
         </div>
         <button type="button" data-bridge-settings-refresh ${state.operatorBridgeLoading ? 'disabled' : ''}>
           ${state.operatorBridgeLoading ? 'Actualizando...' : 'Actualizar'}
@@ -3203,8 +3203,14 @@ function renderBridgeSettingsServiceView() {
         <div class="anpr-config-grid">
           <label class="wide-field">
             Identificador
-            <input name="deviceId" value="${escapeAttr(identifier)}" readonly />
+            <input name="deviceId" value="${escapeAttr(identifier === 'Sin consultar' ? '' : identifier)}" maxlength="120" pattern="[A-Za-z0-9._:\\-]+" required autocomplete="off" spellcheck="false" />
+            <span class="field-hint">Usa un identificador diferente en cada equipo. Confirma que el codigo de dos caracteres no este en uso por otro Bridge del mismo acceso.</span>
           </label>
+          <div class="bridge-device-code-card" aria-live="polite">
+            <span>Codigo en nuevos folios</span>
+            <strong data-bridge-device-code-preview>${escapeHtml(cfg.deviceCode || '--')}</strong>
+            <small data-bridge-device-code-status>Calculado a partir del identificador actual.</small>
+          </div>
           <label class="wide-field">
             SN
             <input name="serialNumber" value="${escapeAttr(sn)}" placeholder="SN visible en EOLO Cloud" autocomplete="off" />
@@ -3219,6 +3225,7 @@ function renderBridgeSettingsServiceView() {
         <div class="form-actions">
           <button type="submit" class="primary-button">Guardar y reflejar en Cloud</button>
         </div>
+        <p class="field-hint">El cambio se aplicara a los folios nuevos. Los movimientos pendientes conservaran su folio actual.</p>
       </form>
       ${state.operatorBridgeLastResult ? `<pre class="json-block face-sync-log">${escapeHtml(pretty(state.operatorBridgeLastResult))}</pre>` : ''}
     </section>
@@ -6096,6 +6103,7 @@ async function saveCloudSyncSettings(form) {
 async function saveBridgeSettings(form) {
   const access = pedestrianAccessContext();
   const payload = {
+    deviceId: form.elements.deviceId.value.trim(),
     serialNumber: form.elements.serialNumber.value.trim(),
     accessId: access.id || ''
   };
@@ -6109,10 +6117,10 @@ async function saveBridgeSettings(form) {
   state.operatorBridgeLoaded = true;
   state.operatorBridgeError = '';
   state.operatorBridgeMessage = result.deviceHeartbeat?.ok
-    ? 'SN guardado y reflejado en EOLO Cloud.'
+    ? 'Identificador y SN guardados; Cloud confirmo el reflejo.'
     : result.deviceHeartbeat?.error
-      ? `SN guardado localmente; Cloud no confirmo: ${result.deviceHeartbeat.error}`
-      : 'SN guardado localmente.';
+      ? `Identificador y SN guardados localmente; Cloud no confirmo: ${result.deviceHeartbeat.error}`
+      : 'Identificador y SN guardados localmente.';
   state.operatorBridgeLastResult = result;
   renderServiceSidebar();
   renderServiceDetail();
@@ -6123,6 +6131,37 @@ async function saveBridgeSettings(form) {
     deviceHeartbeat: result.deviceHeartbeat
   });
   return result;
+}
+
+let bridgeDeviceCodePreviewTimer = null;
+
+function previewBridgeDeviceCode(input) {
+  clearTimeout(bridgeDeviceCodePreviewTimer);
+  const deviceId = input.value.trim();
+  const form = input.closest('#bridgeSettingsForm');
+  const code = form?.querySelector('[data-bridge-device-code-preview]');
+  const status = form?.querySelector('[data-bridge-device-code-status]');
+  if (!code || !status) return;
+  code.textContent = '--';
+  status.textContent = deviceId ? 'Calculando...' : 'Ingresa un identificador para ver el codigo.';
+  if (!deviceId) return;
+  bridgeDeviceCodePreviewTimer = setTimeout(async () => {
+    try {
+      const result = await api('/api/operator/bridge-settings/device-code-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId })
+      });
+      if (input.isConnected && input.value.trim() === deviceId) {
+        code.textContent = result.deviceCode;
+        status.textContent = 'Vista previa; guarda para aplicar a los nuevos folios.';
+      }
+    } catch (error) {
+      if (input.isConnected && input.value.trim() === deviceId) {
+        status.textContent = error.message;
+      }
+    }
+  }, 250);
 }
 
 function readAnprConfigForm(form) {
@@ -7050,6 +7089,10 @@ $('#serviceDetail').addEventListener('change', (event) => {
 });
 
 $('#serviceDetail').addEventListener('input', (event) => {
+  if (event.target.matches('#bridgeSettingsForm [name="deviceId"]')) {
+    previewBridgeDeviceCode(event.target);
+    return;
+  }
   if (event.target.matches('#identificationReaderForm [name="cameraZoomPercent"]')) {
     const value = identificationCameraZoomPercent({ cameraZoomPercent: event.target.value });
     localStorage.setItem('eolo.operator.cameraZoomPercent', String(value));

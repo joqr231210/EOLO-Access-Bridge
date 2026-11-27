@@ -5,6 +5,7 @@ Servicio local para operar accesos EOLO desde una LAN. Incluye panel de operador
 ## Funciones incluidas
 
 - Panel de operador en `http://localhost:8080` para login EOLO, seleccion de acceso/punto de control, movimientos, eventos y ajustes.
+- En `/settings > Ajustes Bridge` se puede editar el identificador local y previsualizar el codigo de dos caracteres que se usara en los folios nuevos. El ajuste se guarda en `data/device-config.json` y se restaura al iniciar la app. Antes de cambiarlo, verifica que el codigo no este en uso por otro Bridge del mismo acceso; los movimientos pendientes conservan su folio.
 - El login muestra la version local desde `package.json` y la rama cloud por separado. Al preparar una nueva version, actualiza `package.json` y `package-lock.json` con `npm version patch --no-git-tag-version`; el login y el instalador tomaran la misma version sin editar textos fijos.
 - Seccion `Eventos` para auditoria local de detecciones y operaciones de puerta, con busqueda, rango de fechas, filtros y metricas.
 - Creacion automatica de eventos locales cuando el operador registra movimientos desde el panel de Movimientos.
@@ -70,20 +71,20 @@ Si el repositorio ya existe en ese equipo, actualiza `main` con `git pull --ff-o
 El instalador Windows queda en:
 
 ```text
-release\EOLO Access Bridge Setup 0.2.16.exe
+release\EOLO Access Bridge Setup 0.2.17.exe
 ```
 
 El instalador macOS queda en:
 
 ```text
-release/EOLO Access Bridge-0.2.16-arm64.dmg
+release/EOLO Access Bridge-0.2.17-arm64.dmg
 ```
 
 Notas:
 
 - El build Windows debe ejecutarse en Windows porque PyInstaller necesita binarios nativos de OpenCV/PyTorch/onnxruntime.
 - El `git push` publica el codigo fuente; no genera ni instala un `.exe` nuevo en Windows. El manifiesto de actualizaciones permanece en `0.2.10` hasta que se publique un instalador con SHA-256 real.
-- La version del codigo fuente es `0.2.16`. Para este corte, ejecuta `npm test` y compila el instalador despues de `git pull --ff-only origin main` y `npm ci`; no ejecutes `npm version patch` de nuevo antes de ese build.
+- La version del codigo fuente es `0.2.17`. Para este corte, ejecuta `npm test` y compila el instalador despues de `git pull --ff-only origin main` y `npm ci`; no ejecutes `npm version patch` de nuevo antes de ese build.
 - ANPR incluye localmente los modelos YOLO y el OCR `cct-s-v2-global-model` con su configuracion correspondiente. El build verifica SHA-256 y carga los modelos antes de empaquetar, sin descargar el OCR durante la operacion.
 - `GET /api/anpr/status` distingue errores de captura y procesamiento, e incluye `models_loaded`, `model_load_stage`, `processing_running` y contadores de prediccion. Un fallo permanente de carga queda visible y el watchdog no reinicia ese proceso en ciclo; se puede reintentar manualmente tras corregir el problema.
 - La escritura de `anpr-status.json` usa un archivo temporal unico y reintentos breves ante bloqueos de Windows. Si la carpeta carece de permisos de escritura, `/api/dashboard` conserva el diagnostico `status-file-error` para resolver los permisos del equipo.
@@ -108,12 +109,12 @@ https://raw.githubusercontent.com/joqr231210/EOLO-Access-Bridge/main/updates/win
 
 Si el manifiesto publica una version mayor, la app ofrece descargar el instalador, valida SHA-256 si viene incluido, y al elegir **Instalar ahora** cierra Bridge/ANPR de forma ordenada antes de abrir el setup.
 
-Para publicar esta actualizacion, primero genera el instalador Windows `0.2.16` y subelo a GitHub Releases. Despues, en el equipo con el `.exe`:
+Para publicar esta actualizacion, primero genera el instalador Windows `0.2.17` y subelo a GitHub Releases. Despues, en el equipo con el `.exe`:
 
 ```powershell
-npm run updates:win-manifest -- "release\EOLO Access Bridge Setup 0.2.16.exe" "https://URL-publica/EOLO%20Access%20Bridge%20Setup%200.2.16.exe"
+npm run updates:win-manifest -- "release\EOLO Access Bridge Setup 0.2.17.exe" "https://URL-publica/EOLO%20Access%20Bridge%20Setup%200.2.17.exe"
 git add updates/windows-latest.json
-git commit -m "Publicar instalador EOLO Access Bridge 0.2.16"
+git commit -m "Publicar instalador EOLO Access Bridge 0.2.17"
 git push
 ```
 
@@ -121,7 +122,9 @@ No actualices `updates/windows-latest.json` hasta tener la URL publica final del
 
 ### Verificacion de pendientes en Windows
 
-Antes de instalar `0.2.16` en un equipo con pendientes, cierra Bridge y respalda completa la carpeta `%APPDATA%\EOLO Access Bridge\data`. Contiene la cola `operator-pending-movements.json`, sus fotos en `operator-pending-assets` y datos personales; manten el respaldo en un lugar privado.
+Antes de instalar `0.2.17` en un equipo con pendientes, cierra Bridge y respalda completa la carpeta `%APPDATA%\EOLO Access Bridge\data`. Contiene la cola `operator-pending-movements.json`, sus fotos en `operator-pending-assets` y datos personales; manten el respaldo en un lugar privado.
+
+Despues de instalar `0.2.17`, entra a `/settings > Ajustes Bridge`. El identificador se puede editar y la tarjeta muestra de inmediato el codigo de dos caracteres que producirian los folios nuevos. Confirma que ese codigo no este ocupado por otro Bridge del mismo acceso antes de guardar. Comprueba que el valor persista tras cerrar y abrir la app; los pendientes anteriores conservan sus folios originales.
 
 Tras instalar, abre `Movimientos > Movimientos por sincronizar` y comprueba que cada registro muestre su propio boton `Eliminar`. Antes de descartarlo, confirma en EOLO Cloud que el movimiento ya existe con el mismo acceso y folio `ID2`, y revisa sus datos/fotos. Elimina un pendiente a la vez, acepta la confirmacion, recarga la vista y verifica que solo ese registro desaparecio; la accion no borra el movimiento cloud. Si no existe en Cloud o le faltan datos, no lo descartes: recupera primero la foto o resuelve el registro manualmente.
 
